@@ -9,3 +9,5 @@ script:
   - gulp build
 os:
   - linux
+notifications:
+  email: false
