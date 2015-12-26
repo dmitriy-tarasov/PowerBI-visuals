@@ -30,11 +30,14 @@ module powerbi.visuals {
     export interface DonutChartAnimationOptions extends IAnimationOptions {
         viewModel: DonutData;
         graphicsContext: D3.Selection;
+        labelGraphicsContext: D3.Selection;
         colors: IDataColorPalette;
         layout: DonutLayout;
         sliceWidthRatio: number;
         radius: number;
         viewport: IViewport;
+        innerArcRadiusRatio: number;
+        labels: Label[];
     }
 
     export interface DonutChartAnimationResult extends IAnimationResult {
@@ -42,9 +45,9 @@ module powerbi.visuals {
         highlightShapes: D3.UpdateSelection;
     }
 
-    export type IDonutChartAnimator = Animator<IAnimatorOptions, DonutChartAnimationOptions, DonutChartAnimationResult>;
+    export type IDonutChartAnimator = IAnimator<IAnimatorOptions, DonutChartAnimationOptions, DonutChartAnimationResult>;
 
-    export class WebDonutChartAnimator extends Animator<IAnimatorOptions, DonutChartAnimationOptions, DonutChartAnimationResult> implements IDonutChartAnimator {
+    export class WebDonutChartAnimator extends BaseAnimator<IAnimatorOptions, DonutChartAnimationOptions, DonutChartAnimationResult> implements IDonutChartAnimator {
         private previousViewModel: DonutData;
 
         constructor(options?: IAnimatorOptions) {
@@ -52,14 +55,14 @@ module powerbi.visuals {
         }
 
         public animate(options: DonutChartAnimationOptions): DonutChartAnimationResult {
-            var result: DonutChartAnimationResult = {
+            let result: DonutChartAnimationResult = {
                 failed: true,
                 shapes: null,
                 highlightShapes: null,
             };
 
-            var viewModel = options.viewModel;
-            var previousViewModel = this.previousViewModel;
+            let viewModel = options.viewModel;
+            let previousViewModel = this.previousViewModel;
 
             if (!previousViewModel) {
                 // This is the initial drawing of the chart, which has no special animation for now.
@@ -79,9 +82,9 @@ module powerbi.visuals {
         }
 
         private animateNormalToHighlighted(options: DonutChartAnimationOptions): DonutChartAnimationResult {
-            var shapes = this.animateDefaultShapes(options);
+            let shapes = this.animateDefaultShapes(options);
 
-            var highlightShapes = options.graphicsContext.select('.slices')
+            let highlightShapes = options.graphicsContext.select('.slices')
                 .selectAll('path.slice-highlight')
                 .data(options.viewModel.dataPoints.filter((value: DonutArcDescriptor) => value.data.highlightRatio != null), (d: DonutArcDescriptor) => d.data.identity.getKey());
 
@@ -90,9 +93,13 @@ module powerbi.visuals {
                 .classed('slice-highlight', true)
                 .each(function (d) { this._current = d; });
 
+            DonutChart.isSingleColor(options.viewModel.dataPoints.filter((value: DonutArcDescriptor) => value.data.highlightRatio != null));
+
             highlightShapes
                 .style('fill', (d: DonutArcDescriptor) => d.data.color ? d.data.color : options.colors.getNewColorScale().getColor(d.data.identity.getKey()).value)
                 .style('fill-opacity', (d: DonutArcDescriptor) => ColumnUtil.getFillOpacity(d.data.selected, true, false, options.viewModel.hasHighlights))
+                .style("stroke-dasharray", (d: DonutArcDescriptor) => DonutChart.drawStrokeForDonutChart(options.radius, options.innerArcRadiusRatio, d, options.sliceWidthRatio, d.data.highlightRatio))
+                .style("stroke-width", (d: DonutArcDescriptor) => d.data.highlightRatio === 0 ? 0 : d.data.strokeWidth)
                 .attr(options.layout.shapeLayout)  // Start at the non-highlight layout, then transition to the highlight layout.
                 .transition()
                 .duration(this.animationDuration)
@@ -101,7 +108,8 @@ module powerbi.visuals {
             highlightShapes.exit()
                 .remove();
 
-            DonutChart.drawDefaultCategoryLabels(options.graphicsContext, options.viewModel, options.layout, options.sliceWidthRatio, options.radius, options.viewport);
+            NewDataLabelUtils.drawDefaultLabels(options.labelGraphicsContext, options.labels, false);
+            NewDataLabelUtils.drawLabelLeaderLines(options.labelGraphicsContext, options.labels);
 
             return {
                 failed: false,
@@ -111,11 +119,11 @@ module powerbi.visuals {
         }
 
         private animateHighlightedToHighlighted(options: DonutChartAnimationOptions): DonutChartAnimationResult {
-            var shapes = this.animateDefaultShapes(options);
+            let shapes = this.animateDefaultShapes(options);
 
-            var highlightShapes = this.animateDefaultHighlightShapes(options);
-
-            DonutChart.drawDefaultCategoryLabels(options.graphicsContext, options.viewModel, options.layout, options.sliceWidthRatio, options.radius, options.viewport);
+            let highlightShapes = this.animateDefaultHighlightShapes(options);
+            NewDataLabelUtils.drawDefaultLabels(options.labelGraphicsContext, options.labels, false);
+            NewDataLabelUtils.drawLabelLeaderLines(options.labelGraphicsContext, options.labels);
 
             return {
                 failed: false,
@@ -125,10 +133,10 @@ module powerbi.visuals {
         }
 
         private animateHighlightedToNormal(options: DonutChartAnimationOptions): DonutChartAnimationResult {
-            var hasSelection = options.interactivityService && (<WebInteractivityService>options.interactivityService).hasSelection();
-            var duration = this.animationDuration;
+            let hasSelection = options.interactivityService && options.interactivityService.hasSelection();
+            let duration = this.animationDuration;
 
-            var shapes = options.graphicsContext.select('.slices')
+            let shapes = options.graphicsContext.select('.slices')
                 .selectAll('path.slice')
                 .data(options.viewModel.dataPoints, (d: DonutArcDescriptor) => d.data.identity.getKey());
 
@@ -137,11 +145,15 @@ module powerbi.visuals {
                 .classed('slice', true)
                 .each(function (d) { this._current = d; });
 
+            DonutChart.isSingleColor(options.viewModel.dataPoints);
+
             // For any slice that is selected we want to keep showing it as dimmed (partially highlighted). After the highlight animation
             // finishes we will set the opacity based on the selection state.
             shapes
                 .style('fill', (d: DonutArcDescriptor) => d.data.color ? d.data.color : options.colors.getNewColorScale().getColor(d.data.identity.getKey()).value)
                 .style('fill-opacity', (d: DonutArcDescriptor) => ColumnUtil.getFillOpacity(d.data.selected, false, d.data.selected, !d.data.selected))
+                .style("stroke-dasharray", (d: DonutArcDescriptor) => DonutChart.drawStrokeForDonutChart(options.radius, options.innerArcRadiusRatio, d, options.sliceWidthRatio))
+                .style("stroke-width", (d: DonutArcDescriptor) => d.data.strokeWidth)
                 .transition()
                 .duration(duration)
                 .attr(options.layout.shapeLayout)
@@ -153,7 +165,7 @@ module powerbi.visuals {
             shapes.exit()
                 .remove();
 
-            var highlightShapes = options.graphicsContext.select('.slices')
+            let highlightShapes = options.graphicsContext.select('.slices')
                 .selectAll('path.slice-highlight')
                 .data(options.viewModel.dataPoints.filter((value: DonutArcDescriptor) => value.data.highlightRatio != null), (d: DonutArcDescriptor) => d.data.identity.getKey());
 
@@ -162,9 +174,13 @@ module powerbi.visuals {
                 .classed('slice-highlight', true)
                 .each(function (d) { this._current = d; });
 
+            DonutChart.isSingleColor(options.viewModel.dataPoints.filter((value: DonutArcDescriptor) => value.data.highlightRatio != null));
+
             highlightShapes
                 .style('fill', (d: DonutArcDescriptor) => d.data.color ? d.data.color : options.colors.getNewColorScale().getColor(d.data.identity.getKey()).value)
                 .style('fill-opacity', (d: DonutArcDescriptor) => ColumnUtil.getFillOpacity(false, true, false, true))
+                .style("stroke-dasharray", (d: DonutArcDescriptor) => DonutChart.drawStrokeForDonutChart(options.radius, options.innerArcRadiusRatio, d, options.sliceWidthRatio, d.data.highlightRatio))
+                .style("stroke-width", (d: DonutArcDescriptor) => d.data.highlightRatio === 0 ? 0 : d.data.strokeWidth)
                 .transition()
                 .duration(duration)
                 .attr(hasSelection ? options.layout.zeroShapeLayout : options.layout.shapeLayout)  // Transition to the non-highlight layout
@@ -173,7 +189,8 @@ module powerbi.visuals {
             highlightShapes.exit()
                 .remove();
 
-            DonutChart.drawDefaultCategoryLabels(options.graphicsContext, options.viewModel, options.layout, options.sliceWidthRatio, options.radius, options.viewport);
+            NewDataLabelUtils.drawDefaultLabels(options.labelGraphicsContext, options.labels, false);
+            NewDataLabelUtils.drawLabelLeaderLines(options.labelGraphicsContext, options.labels);
 
             return {
                 failed: false,
@@ -183,7 +200,7 @@ module powerbi.visuals {
         }
 
         private animateDefaultShapes(options: DonutChartAnimationOptions): D3.UpdateSelection {
-            var shapes = options.graphicsContext.select('.slices')
+            let shapes = options.graphicsContext.select('.slices')
                 .selectAll('path.slice')
                 .data(options.viewModel.dataPoints, (d: DonutArcDescriptor) => d.data.identity.getKey());
 
@@ -192,9 +209,13 @@ module powerbi.visuals {
                 .classed('slice', true)
                 .each(function (d) { this._current = d; });
 
+            DonutChart.isSingleColor(options.viewModel.dataPoints);
+
             shapes
                 .style('fill', (d: DonutArcDescriptor) => d.data.color ? d.data.color : options.colors.getNewColorScale().getColor(d.data.identity.getKey()).value)
                 .style('fill-opacity', (d: DonutArcDescriptor) => ColumnUtil.getFillOpacity(d.data.selected, false, false, options.viewModel.hasHighlights))
+                .style("stroke-dasharray", (d: DonutArcDescriptor) => DonutChart.drawStrokeForDonutChart(options.radius, options.innerArcRadiusRatio, d, options.sliceWidthRatio))
+                .style("stroke-width", (d: DonutArcDescriptor) => d.data.strokeWidth)
                 .transition()
                 .duration(this.animationDuration)
                 .attr(options.layout.shapeLayout);
@@ -206,7 +227,7 @@ module powerbi.visuals {
         }
 
         private animateDefaultHighlightShapes(options: DonutChartAnimationOptions): D3.UpdateSelection {
-            var highlightShapes = options.graphicsContext.select('.slices')
+            let highlightShapes = options.graphicsContext.select('.slices')
                 .selectAll('path.slice-highlight')
                 .data(options.viewModel.dataPoints.filter((value: DonutArcDescriptor) => value.data.highlightRatio != null), (d: DonutArcDescriptor) => d.data.identity.getKey());
 
@@ -215,9 +236,13 @@ module powerbi.visuals {
                 .classed('slice-highlight', true)
                 .each(function (d) { this._current = d; });
 
+            DonutChart.isSingleColor(options.viewModel.dataPoints.filter((value: DonutArcDescriptor) => value.data.highlightRatio != null));
+
             highlightShapes
                 .style('fill', (d: DonutArcDescriptor) => d.data.color ? d.data.color : options.colors.getNewColorScale().getColor(d.data.identity.getKey()).value)
                 .style('fill-opacity', (d: DonutArcDescriptor) => ColumnUtil.getFillOpacity(d.data.selected, true, false, options.viewModel.hasHighlights))
+                .style("stroke-dasharray", (d: DonutArcDescriptor) => DonutChart.drawStrokeForDonutChart(options.radius, options.innerArcRadiusRatio, d, options.sliceWidthRatio, d.data.highlightRatio))
+                .style("stroke-width", (d: DonutArcDescriptor) => d.data.highlightRatio === 0 ? 0 : d.data.strokeWidth)
                 .transition()
                 .duration(this.animationDuration)
                 .attr(options.layout.highlightShapeLayout);

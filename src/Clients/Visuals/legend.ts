@@ -27,6 +27,10 @@
 /// <reference path="_references.ts"/>
 
 module powerbi.visuals {
+    import ClassAndSelector = jsCommon.CssConstants.ClassAndSelector;
+    import createClassAndSelector = jsCommon.CssConstants.createClassAndSelector;
+    import PixelConverter = jsCommon.PixelConverter;
+
     export enum LegendIcon {
         Box,
         Circle,
@@ -39,6 +43,10 @@ module powerbi.visuals {
         Right,
         Left,
         None,
+        TopCenter,
+        BottomCenter,
+        RightCenter,
+        LeftCenter,          
     }
 
     export interface LegendPosition2D {
@@ -60,16 +68,21 @@ module powerbi.visuals {
         title?: string;
         dataPoints: LegendDataPoint[];
         grouped?: boolean;
+        labelColor?: string;
+        fontSize?: number;
     }
 
-    export var legendProps = {
+    export const legendProps = {
         show: 'show',
         position: 'position',
         titleText: 'titleText',
         showTitle: 'showTitle',
+        labelColor: 'labelColor',
+        fontSize: 'fontSize',
     };
 
-    export function createLegend(legendParentElement: JQuery, interactive: boolean,
+    export function createLegend(legendParentElement: JQuery,
+        interactive: boolean,
         interactivityService: IInteractivityService,
         isScrollable: boolean = false,
         legendPosition: LegendPosition = LegendPosition.Top): ILegend {
@@ -104,13 +117,13 @@ module powerbi.visuals {
     }
 
     export function getLabelMaxSize(currentViewport: IViewport, numItems: number, hasTitle: boolean): string {
-        var viewportWidth = currentViewport.width;
-        var smallTileWidth = 250;
-        var mediumTileWidth = 490;
-        var largeTileWidth = 750;
-        var tileMargins = 20;
-        var legendMarkerWidth = 28;
-        var legendItems;
+        let viewportWidth = currentViewport.width;
+        let smallTileWidth = 250;
+        let mediumTileWidth = 490;
+        let largeTileWidth = 750;
+        let tileMargins = 20;
+        let legendMarkerWidth = 28;
+        let legendItems;
 
         if (numItems < 1)
             return '48px';
@@ -159,16 +172,17 @@ module powerbi.visuals {
     }
 
     interface LegendLayout {
-        dataPoints: LegendDataPoint[];
+        numberOfItems: number;
         title: TitleLayout;
         navigationArrows: NavigationArrow[];
     }
 
-    class SVGLegend implements ILegend {
+    export class SVGLegend implements ILegend {
         private orientation: LegendPosition;
         private viewport: IViewport;
         private parentViewport: IViewport;
         private svg: D3.Selection;
+        private group: D3.Selection;
         private clearCatcher: D3.Selection;
         private element: JQuery;
         private interactivityService: IInteractivityService;
@@ -178,7 +192,12 @@ module powerbi.visuals {
         private isScrollable: boolean;
 
         private lastCalculatedWidth = 0;
+        private visibleLegendWidth = 0;
+        private visibleLegendHeight = 0;
+        private legendFontSizeMarginDifference = 0;
+        private legendFontSizeMarginValue = 0;
 
+        public static DefaultFontSizeInPt = 8;
         private static LegendIconRadius = 5;
         private static MaxTextLength = 60;
         private static MaxTitleLength = 80;
@@ -187,6 +206,8 @@ module powerbi.visuals {
         private static LegendEdgeMariginWidth = 10;
         private static LegendMaxWidthFactor = 0.3;
         private static TopLegendHeight = 24;
+        private static DefaultTextMargin = PixelConverter.fromPointToPixel(SVGLegend.DefaultFontSizeInPt);
+        private static DefaultMaxLegendFactor = SVGLegend.MaxTitleLength / SVGLegend.DefaultTextMargin;
         
         // Navigation Arrow constants
         private static LegendArrowOffset = 10;
@@ -194,40 +215,14 @@ module powerbi.visuals {
         private static LegendArrowWidth = 7.5;
         private static LegendArrowTranslateY = 3.5;
 
-        private static LegendTextProperties: TextProperties = {
-            fontFamily: 'wf_segoe-ui_normal',
-            fontSize: '11px'
-        };
+        private static DefaultFontFamily = 'wf_segoe-ui_normal';
+        private static DefaultTitleFontFamily = 'wf_segoe-ui_Semibold';
 
-        private static LegendTitleTextProperties: TextProperties = {
-            fontFamily: 'wf_segoe-ui_Semibold',
-            fontSize: '11px'
-        };
-
-        private static LegendItem: ClassAndSelector = {
-            class: 'legendItem',
-            selector: '.legendItem'
-        };
-
-        private static LegendText: ClassAndSelector = {
-            class: 'legendText',
-            selector: '.legendText'
-        };
-
-        private static LegendIcon: ClassAndSelector = {
-            class: 'legendIcon',
-            selector: '.legendIcon'
-        };
-
-        private static LegendTitle: ClassAndSelector = {
-            class: 'legendTitle',
-            selector: '.legendTitle'
-        };
-
-        private static NavigationArrow: ClassAndSelector = {
-            class: 'navArrow',
-            selector: '.navArrow'
-        };
+        private static LegendItem: ClassAndSelector = createClassAndSelector('legendItem');
+        private static LegendText: ClassAndSelector = createClassAndSelector('legendText');
+        private static LegendIcon: ClassAndSelector = createClassAndSelector('legendIcon');
+        private static LegendTitle: ClassAndSelector = createClassAndSelector('legendTitle');
+        private static NavigationArrow: ClassAndSelector = createClassAndSelector('navArrow');
 
         constructor(
             element: JQuery,
@@ -238,7 +233,9 @@ module powerbi.visuals {
             this.svg = d3.select(element.get(0)).insert('svg', ':first-child');
             this.svg.style('display', 'inherit');
             this.svg.classed('legend', true);
-            this.clearCatcher = appendClearCatcher(this.svg);
+            if (interactivityService)
+                this.clearCatcher = appendClearCatcher(this.svg);
+            this.group = this.svg.append('g').attr('id', 'legendGroup');
             this.interactivityService = interactivityService;
             this.isScrollable = isScrollable;
             this.element = element;
@@ -249,8 +246,8 @@ module powerbi.visuals {
         }
 
         private updateLayout() {
-            var viewport = this.viewport;
-            var orientation = this.orientation;
+            let viewport = this.viewport;
+            let orientation = this.orientation;
             this.svg
                 .attr({
                     'height': viewport.height || (orientation === LegendPosition.None ? 0 : this.parentViewport.height),
@@ -262,10 +259,11 @@ module powerbi.visuals {
              */
                 .style('max-width', '100%');
 
+            let isBottom = orientation === LegendPosition.Bottom || orientation === LegendPosition.BottomCenter;
             this.svg.style({
                 'float': this.getFloat(),
-                'position': orientation === LegendPosition.Bottom ? 'absolute' : '',
-                'bottom': orientation === LegendPosition.Bottom ? '0px' : '',
+                'position': isBottom ? 'absolute' : '',
+                'bottom': isBottom ? '0px' : '',
             });
         }
 
@@ -273,11 +271,17 @@ module powerbi.visuals {
             switch (this.orientation) {
                 case LegendPosition.Top:
                 case LegendPosition.Bottom:
-                    this.viewport = { height: SVGLegend.TopLegendHeight, width: 0 };
+                case LegendPosition.TopCenter:
+                case LegendPosition.BottomCenter:
+                    let pixelHeight = PixelConverter.fromPointToPixel(this.data && this.data.fontSize ? this.data.fontSize : SVGLegend.DefaultFontSizeInPt);
+                    let fontHeightSize = SVGLegend.TopLegendHeight + (pixelHeight - SVGLegend.DefaultFontSizeInPt);
+                    this.viewport = { height: fontHeightSize, width: 0 };
                     return;
                 case LegendPosition.Right:
                 case LegendPosition.Left:
-                    var width = this.lastCalculatedWidth ? this.lastCalculatedWidth : this.parentViewport.width * SVGLegend.LegendMaxWidthFactor;
+                case LegendPosition.RightCenter:
+                case LegendPosition.LeftCenter:
+                    let width = this.lastCalculatedWidth ? this.lastCalculatedWidth : this.parentViewport.width * SVGLegend.LegendMaxWidthFactor;
                     this.viewport = { height: 0, width: width };
                     return;
 
@@ -289,15 +293,13 @@ module powerbi.visuals {
         private getFloat(): string {
             switch (this.orientation) {
                 case LegendPosition.Right:
+                case LegendPosition.RightCenter:
                     return 'right';
                 case LegendPosition.Left:
+                case LegendPosition.LeftCenter:
                     return 'left';
                 default: return '';
             }
-        }
-
-        public accept(visitor: InteractivityVisitor, options: any): void {
-            visitor.visitLegend(options);
         }
 
         public getMargins(): IViewport {
@@ -329,6 +331,9 @@ module powerbi.visuals {
             this.parentViewport = viewport;
             this.data = data;
 
+            if (this.interactivityService)
+                this.interactivityService.applySelectionStateToData(data.dataPoints);
+
             if (data.dataPoints.length === 0) {
                 this.changeOrientation(LegendPosition.None);
             }
@@ -338,30 +343,50 @@ module powerbi.visuals {
             }
 
             // Adding back the workaround for Legend Left/Right position for Map
-            var mapControl = this.element.children(".mapControl");
+            let mapControl = this.element.children(".mapControl");
             if (mapControl.length > 0 && !this.isTopOrBottom(this.orientation)) {
                 mapControl.css("display", "inline-block");
             }
 
             this.calculateViewport();
 
-            var layout = this.calculateLayout(data, autoWidth);
-            var titleLayout = layout.title;
-            var titleData = titleLayout ? [titleLayout] : [];
+            let layout = this.calculateLayout(data, autoWidth);
+            let titleLayout = layout.title;
+            let titleData = titleLayout ? [titleLayout] : [];
+            let hasSelection = this.interactivityService && powerbi.visuals.dataHasSelection(data.dataPoints);
 
-            var legendTitle = this.svg
+            let group = this.group;
+
+            //transform the wrapping group if position is centered
+            if (this.isCentered(this.orientation)) {
+                let centerOffset = 0;
+                if (this.isTopOrBottom(this.orientation)) {
+                    centerOffset = Math.max(0, (this.parentViewport.width - this.visibleLegendWidth) / 2);
+                    group.attr('transform', SVGUtil.translate(centerOffset, 0));
+                }
+                else {
+                    centerOffset = Math.max((this.parentViewport.height - this.visibleLegendHeight) / 2);
+                    group.attr('transform', SVGUtil.translate(0, centerOffset));
+                }
+            }
+            else {
+                group.attr('transform', null);
+            }
+
+            let legendTitle = group
                 .selectAll(SVGLegend.LegendTitle.selector)
                 .data(titleData);
 
             legendTitle.enter()
                 .append('text')
-                .style({
-                    'font-size': SVGLegend.LegendTitleTextProperties.fontSize,
-                    'font-family': SVGLegend.LegendTitleTextProperties.fontFamily
-                })
                 .classed(SVGLegend.LegendTitle.class, true);
 
             legendTitle
+                .style({
+                    'fill': data.labelColor,
+                    'font-size': PixelConverter.fromPoint(data.fontSize),
+                    'font-family': SVGLegend.DefaultTitleFontFamily
+                })
                 .text((d: TitleLayout) => d.text)
                 .attr({
                     'x': (d: TitleLayout) => d.x,
@@ -370,13 +395,13 @@ module powerbi.visuals {
 
             legendTitle.exit().remove();
 
-            var dataPointsLayout = layout.dataPoints;
+            let virtualizedDataPoints = data.dataPoints.slice(this.legendDataStartIndex, this.legendDataStartIndex + layout.numberOfItems);
 
-            var legendItems = this.svg
+            let legendItems = group
                 .selectAll(SVGLegend.LegendItem.selector)
-                .data(dataPointsLayout, (d: LegendDataPoint) => d.label + d.color);
+                .data(virtualizedDataPoints, (d: LegendDataPoint) => d.identity.getKey());
 
-            var itemsEnter = legendItems.enter()
+            let itemsEnter = legendItems.enter()
                 .append('g')
                 .classed(SVGLegend.LegendItem.class, true);
 
@@ -388,10 +413,11 @@ module powerbi.visuals {
 
             itemsEnter
                 .append('text')
-                .classed(SVGLegend.LegendText.class, true)
+                .classed(SVGLegend.LegendText.class, true);
+
+            itemsEnter
                 .style({
-                    'font-size': SVGLegend.LegendTextProperties.fontSize,
-                    'font-family': SVGLegend.LegendTextProperties.fontFamily
+                    'font-family': SVGLegend.DefaultFontFamily
                 });
 
             legendItems
@@ -401,7 +427,14 @@ module powerbi.visuals {
                     'cy': (d: LegendDataPoint) => d.glyphPosition.y,
                     'r': SVGLegend.LegendIconRadius,
                 })
-                .style('fill', (d: LegendDataPoint) => d.color);
+                .style({
+                    'fill': (d: LegendDataPoint) => {
+                        if (hasSelection && !d.selected)
+                            return LegendBehavior.dimmedLegendColor;
+                        else
+                            return d.color;
+                    }
+                });
 
             legendItems
                 .select('title')
@@ -413,18 +446,19 @@ module powerbi.visuals {
                     'x': (d: LegendDataPoint) => d.textPosition.x,
                     'y': (d: LegendDataPoint) => d.textPosition.y,
                 })
-                .text((d: LegendDataPoint) => d.label);
+                .text((d: LegendDataPoint) => d.label)
+                .style('fill', data.labelColor)
+                .style('font-size', PixelConverter.fromPoint(data.fontSize));
 
             if (this.interactivityService) {
-                var iconsSelection = legendItems.select(SVGLegend.LegendIcon.selector);
-                var behaviorOptions: LegendBehaviorOptions = {
-                    datapoints: dataPointsLayout,
+                let iconsSelection = legendItems.select(SVGLegend.LegendIcon.selector);
+                let behaviorOptions: LegendBehaviorOptions = {
                     legendItems: legendItems,
                     legendIcons: iconsSelection,
                     clearCatcher: this.clearCatcher,
                 };
 
-                this.interactivityService.apply(this, behaviorOptions);
+                this.interactivityService.bind(data.dataPoints, new LegendBehavior(), behaviorOptions, { isLegend: true });
             }
 
             legendItems.exit().remove();
@@ -445,24 +479,30 @@ module powerbi.visuals {
         }
 
         private calculateTitleLayout(title: string): TitleLayout {
-            var width = 0;
-            var hasTitle = !jsCommon.StringExtensions.isNullOrEmpty(title);
+            let width = 0;
+            let hasTitle = !jsCommon.StringExtensions.isNullOrEmpty(title);
 
             if (hasTitle) {
-                var properties = SVGLegend.LegendTextProperties;
-                var text = properties.text = title;
-                var isHorizontal = this.isTopOrBottom(this.orientation);
-                var fixedHorizontalIconShift = SVGLegend.TextAndIconPadding + SVGLegend.LegendIconRadius;
-                var fixedHorizontalTextShift = SVGLegend.LegendIconRadius + SVGLegend.TextAndIconPadding + fixedHorizontalIconShift;
-                var maxHorizontalSpaceAvaliable = this.parentViewport.width * SVGLegend.LegendMaxWidthFactor
-                    - fixedHorizontalTextShift - SVGLegend.LegendEdgeMariginWidth;
+                let isHorizontal = this.isTopOrBottom(this.orientation);
+                let maxMeasureLength: number;
 
-                var maxMeasureLength = isHorizontal ? SVGLegend.MaxTitleLength : maxHorizontalSpaceAvaliable;
+                if (isHorizontal) {
+                    let fontSizeMargin = this.legendFontSizeMarginValue > SVGLegend.DefaultTextMargin ? SVGLegend.TextAndIconPadding + this.legendFontSizeMarginDifference : SVGLegend.TextAndIconPadding;
+                    let fixedHorizontalIconShift = SVGLegend.TextAndIconPadding + SVGLegend.LegendIconRadius;
+                    let fixedHorizontalTextShift = SVGLegend.LegendIconRadius + fontSizeMargin + fixedHorizontalIconShift;
+                    maxMeasureLength = this.parentViewport.width * SVGLegend.LegendMaxWidthFactor - fixedHorizontalTextShift - SVGLegend.LegendEdgeMariginWidth;
+                }
+                else {
+                    maxMeasureLength = this.legendFontSizeMarginValue < SVGLegend.DefaultTextMargin ? SVGLegend.MaxTitleLength :
+                        SVGLegend.MaxTitleLength + (SVGLegend.DefaultMaxLegendFactor * this.legendFontSizeMarginDifference);
+                }
 
-                var width = TextMeasurementService.measureSvgTextWidth(properties);
+                let textProperties = SVGLegend.getTextProperties(true, title, this.data.fontSize);
+                let text = title;
+                width = TextMeasurementService.measureSvgTextWidth(textProperties);
 
                 if (width > maxMeasureLength) {
-                    text = TextMeasurementService.getTailoredTextOrDefault(properties, maxMeasureLength);
+                    text = TextMeasurementService.getTailoredTextOrDefault(textProperties, maxMeasureLength);
                     width = maxMeasureLength;
                 };
 
@@ -473,7 +513,7 @@ module powerbi.visuals {
                     x: 0,
                     y: 0,
                     text: text,
-                    width: width
+                    width: width,
                 };
             }
             return null;
@@ -481,37 +521,38 @@ module powerbi.visuals {
         }
         /** Performs layout offline for optimal perfomance */
         private calculateLayout(data: LegendData, autoWidth: boolean): LegendLayout {
+            let dataPoints = data.dataPoints;
             if (data.dataPoints.length === 0) {
                 return {
-                    dataPoints: [],
+                    startIndex: null,
+                    numberOfItems: 0,
                     title: null,
                     navigationArrows: []
                 };
             }
 
-            var dataPoints = Prototype.inherit(data.dataPoints);
+            this.legendFontSizeMarginValue = PixelConverter.fromPointToPixel(this.data && this.data.fontSize !== undefined ? this.data.fontSize : SVGLegend.DefaultFontSizeInPt);
+            this.legendFontSizeMarginDifference = (this.legendFontSizeMarginValue - SVGLegend.DefaultTextMargin);
+
             this.normalizePosition(dataPoints);
             if (this.legendDataStartIndex < dataPoints.length) {
-                dataPoints = dataPoints.splice(this.legendDataStartIndex);
+                dataPoints = dataPoints.slice(this.legendDataStartIndex);
             }
 
-            var title = this.calculateTitleLayout(data.title);
+            let title = this.calculateTitleLayout(data.title);
 
-            var copy: LegendDataPoint[] = $.extend(true, [], dataPoints);
-
+            let navArrows: NavigationArrow[];
+            let numberOfItems: number;
             if (this.isTopOrBottom(this.orientation)) {
-                var navArrows = this.isScrollable ? this.calculateHorizontalNavigationArrowsLayout(title) : [];
-                return {
-                    dataPoints: this.calculateHorizontalLayout(copy, title, navArrows),
-                    title: title,
-                    navigationArrows: navArrows
-                };
+                navArrows = this.isScrollable ? this.calculateHorizontalNavigationArrowsLayout(title) : [];
+                numberOfItems = this.calculateHorizontalLayout(dataPoints, title, navArrows);
             }
-
-            var navArrows = this.isScrollable ? this.calculateVerticalNavigationArrowsLayout(title) : [];
-
+            else {
+                navArrows = this.isScrollable ? this.calculateVerticalNavigationArrowsLayout(title) : [];
+                numberOfItems = this.calculateVerticalLayout(dataPoints, title, navArrows, autoWidth);
+            }
             return {
-                dataPoints: this.calculateVerticalLayout(copy, title, navArrows, autoWidth),
+                numberOfItems: numberOfItems,
                 title: title,
                 navigationArrows: navArrows
             };
@@ -522,7 +563,7 @@ module powerbi.visuals {
                 navigationArrows.shift();
             }
 
-            var lastWindow = this.arrowPosWindow;
+            let lastWindow = this.arrowPosWindow;
             this.arrowPosWindow = visibleDataLength;
 
             if (navigationArrows && navigationArrows.length > 0 && this.arrowPosWindow === remainingDataLength) {
@@ -532,14 +573,14 @@ module powerbi.visuals {
         }
 
         private calculateHorizontalNavigationArrowsLayout(title: TitleLayout): NavigationArrow[] {
-            var height = SVGLegend.LegendArrowHeight;
-            var width = SVGLegend.LegendArrowWidth;
-            var translateY = SVGLegend.LegendArrowTranslateY;
+            let height = SVGLegend.LegendArrowHeight;
+            let width = SVGLegend.LegendArrowWidth;
+            let translateY = SVGLegend.LegendArrowTranslateY;
 
-            var data: NavigationArrow[] = [];
-            var rightShift = title ? title.x + title.width : 0;
-            var arrowLeft = SVGUtil.createArrow(width, height, 180 /*angle*/);
-            var arrowRight = SVGUtil.createArrow(width, height, 0 /*angle*/);
+            let data: NavigationArrow[] = [];
+            let rightShift = title ? title.x + title.width : 0;
+            let arrowLeft = SVGUtil.createArrow(width, height, 180 /*angle*/);
+            let arrowRight = SVGUtil.createArrow(width, height, 0 /*angle*/);
 
             data.push({
                 x: rightShift,
@@ -561,13 +602,13 @@ module powerbi.visuals {
         }
 
         private calculateVerticalNavigationArrowsLayout(title: TitleLayout): NavigationArrow[] {
-            var height = SVGLegend.LegendArrowHeight;
-            var width = SVGLegend.LegendArrowWidth;
+            let height = SVGLegend.LegendArrowHeight;
+            let width = SVGLegend.LegendArrowWidth;
 
-            var data: NavigationArrow[] = [];
-            var rightShift = 40;
-            var arrowTop = SVGUtil.createArrow(width, height, 270 /*angle*/);
-            var arrowBottom = SVGUtil.createArrow(width, height, 90 /*angle*/);
+            let data: NavigationArrow[] = [];
+            let rightShift = 40;
+            let arrowTop = SVGUtil.createArrow(width, height, 270 /*angle*/);
+            let arrowBottom = SVGUtil.createArrow(width, height, 90 /*angle*/);
 
             data.push({
                 x: rightShift,
@@ -588,14 +629,17 @@ module powerbi.visuals {
             return data;
         }
 
-        private calculateHorizontalLayout(dataPoints: LegendDataPoint[], title: TitleLayout, navigationArrows: NavigationArrow[]): LegendDataPoint[] {
+        private calculateHorizontalLayout(dataPoints: LegendDataPoint[], title: TitleLayout, navigationArrows: NavigationArrow[]): number {
             debug.assertValue(navigationArrows, 'navigationArrows');
-
-            var fixedTextShift = SVGLegend.LegendIconRadius + SVGLegend.TextAndIconPadding;
-            var fixedIconShift = 11;
-            var fixedTextShift = fixedIconShift + 4;
-            var totalSpaceOccupiedThusFar = 0;
-            var iconTotalItemPadding = SVGLegend.LegendIconRadius * 2 + SVGLegend.TextAndIconPadding * 3;
+            let HorizontalTextShift = 4;
+            let HorizontalIconShift = 11;
+            let fontSizeBiggerThenDefault = this.legendFontSizeMarginDifference > 0;
+            let fontSizeMargin = fontSizeBiggerThenDefault ? SVGLegend.TextAndIconPadding + this.legendFontSizeMarginDifference : SVGLegend.TextAndIconPadding;
+            let fixedTextShift = SVGLegend.LegendIconRadius + fontSizeMargin + HorizontalTextShift;
+            let fixedIconShift = HorizontalIconShift + (fontSizeBiggerThenDefault ? this.legendFontSizeMarginDifference : 0);
+            let totalSpaceOccupiedThusFar = 0;
+            let iconTotalItemPadding = SVGLegend.LegendIconRadius * 2 + fontSizeMargin * 3;
+            let numberOfItems: number = dataPoints.length;
 
             if (title) {
                 totalSpaceOccupiedThusFar = title.width;
@@ -609,15 +653,15 @@ module powerbi.visuals {
             // This bit expands the max lengh if there are only a few items
             // so longer labels can potentially get more space, and not be
             // ellipsed. 
-            var dataPointsLength = dataPoints.length;
-            var parentWidth = this.parentViewport.width;
-            var maxTextLength = dataPointsLength > 0
+            let dataPointsLength = dataPoints.length;
+            let parentWidth = this.parentViewport.width;
+            let maxTextLength = dataPointsLength > 0
                 ? (((parentWidth - totalSpaceOccupiedThusFar) - (iconTotalItemPadding * dataPointsLength)) / dataPointsLength) | 0
                 : 0;
             maxTextLength = maxTextLength > SVGLegend.MaxTextLength ? maxTextLength : SVGLegend.MaxTextLength;
 
-            for (var i = 0; i < dataPointsLength; i++) {
-                var dp = dataPoints[i];
+            for (let i = 0; i < dataPointsLength; i++) {
+                let dp = dataPoints[i];
 
                 dp.glyphPosition = {
                     x: totalSpaceOccupiedThusFar + SVGLegend.LegendIconRadius,
@@ -629,17 +673,16 @@ module powerbi.visuals {
                     y: fixedTextShift
                 };
 
-                var properties = SVGLegend.LegendTextProperties;
-                properties.text = dp.label;
+                let textProperties = SVGLegend.getTextProperties(false, dp.label, this.data.fontSize);
                 dp.tooltip = dp.label;
 
-                var width = TextMeasurementService.measureSvgTextWidth(properties);
-                var spaceTakenByItem = 0;
+                let width = TextMeasurementService.measureSvgTextWidth(textProperties);
+                let spaceTakenByItem = 0;
                 if (width < maxTextLength) {
                     spaceTakenByItem = iconTotalItemPadding + width;
                 } else {
-                    var text = TextMeasurementService.getTailoredTextOrDefault(
-                        properties,
+                    let text = TextMeasurementService.getTailoredTextOrDefault(
+                        textProperties,
                         maxTextLength);
                     dp.label = text;
                     spaceTakenByItem = iconTotalItemPadding + maxTextLength;
@@ -648,35 +691,40 @@ module powerbi.visuals {
                 totalSpaceOccupiedThusFar += spaceTakenByItem;
 
                 if (totalSpaceOccupiedThusFar > parentWidth) {
-                    dataPoints.length = i; // fast trim
+                    numberOfItems = i;
                     break;
                 }
             }
 
-            this.updateNavigationArrowLayout(navigationArrows, dataPointsLength, dataPoints.length);
+            this.visibleLegendWidth = totalSpaceOccupiedThusFar;
 
-            return dataPoints;
+            this.updateNavigationArrowLayout(navigationArrows, dataPointsLength, numberOfItems);
+
+            return numberOfItems;
         }
 
         private calculateVerticalLayout(
             dataPoints: LegendDataPoint[],
             title: TitleLayout,
             navigationArrows: NavigationArrow[],
-            autoWidth: boolean): LegendDataPoint[] {
-            var verticalLegendHeight = 20;
-            var spaceNeededByTitle = 15;
-            var totalSpaceOccupiedThusFar = verticalLegendHeight;
-            var extraShiftForTextAlignmentToIcon = 4;
-            var fixedHorizontalIconShift = SVGLegend.TextAndIconPadding + SVGLegend.LegendIconRadius;
-            var fixedHorizontalTextShift = SVGLegend.LegendIconRadius + SVGLegend.TextAndIconPadding + fixedHorizontalIconShift;
-            var maxHorizontalSpaceAvaliable = autoWidth
+            autoWidth: boolean): number {
+            let fontSizeBiggerThenDefault = this.legendFontSizeMarginDifference > 0;
+            let fontFactor = fontSizeBiggerThenDefault ? this.legendFontSizeMarginDifference : 0;
+            let verticalLegendHeight = 20 + fontFactor;
+            let spaceNeededByTitle = 15 + (fontFactor * 1.3);
+            let totalSpaceOccupiedThusFar = verticalLegendHeight;
+            let extraShiftForTextAlignmentToIcon = 4 + (fontFactor * 1.3);
+            let fixedHorizontalIconShift = SVGLegend.TextAndIconPadding + SVGLegend.LegendIconRadius;
+            let fixedHorizontalTextShift = SVGLegend.LegendIconRadius + SVGLegend.TextAndIconPadding + fixedHorizontalIconShift;
+            let maxHorizontalSpaceAvaliable = autoWidth
                 ? this.parentViewport.width * SVGLegend.LegendMaxWidthFactor
                 - fixedHorizontalTextShift - SVGLegend.LegendEdgeMariginWidth
                 : this.lastCalculatedWidth
                 - fixedHorizontalTextShift - SVGLegend.LegendEdgeMariginWidth;
+            let numberOfItems: number = dataPoints.length;
 
-            var maxHorizontalSpaceUsed = 0;
-            var parentHeight = this.parentViewport.height;
+            let maxHorizontalSpaceUsed = 0;
+            let parentHeight = this.parentViewport.height;
 
             if (title) {
                 totalSpaceOccupiedThusFar += spaceNeededByTitle;
@@ -688,13 +736,13 @@ module powerbi.visuals {
             if (this.legendDataStartIndex > 0)
                 totalSpaceOccupiedThusFar += SVGLegend.LegendArrowOffset;
 
-            var dataPointsLength = dataPoints.length;
-            for (var i = 0; i < dataPointsLength; i++) {
-                var dp = dataPoints[i];
+            let dataPointsLength = dataPoints.length;
+            for (let i = 0; i < dataPointsLength; i++) {
+                let dp = dataPoints[i];
 
                 dp.glyphPosition = {
                     x: fixedHorizontalIconShift,
-                    y: totalSpaceOccupiedThusFar
+                    y: totalSpaceOccupiedThusFar + fontFactor
                 };
 
                 dp.textPosition = {
@@ -702,20 +750,19 @@ module powerbi.visuals {
                     y: totalSpaceOccupiedThusFar + extraShiftForTextAlignmentToIcon
                 };
 
-                var properties = SVGLegend.LegendTextProperties;
-                properties.text = dp.label;
+                let textProperties = SVGLegend.getTextProperties(false, dp.label, this.data.fontSize);
                 dp.tooltip = dp.label;
 
                 // TODO: [PERF] Get rid of this extra measurement, and modify
                 // getTailoredTextToReturnWidth + Text
-                var width = TextMeasurementService.measureSvgTextWidth(properties);
+                let width = TextMeasurementService.measureSvgTextWidth(textProperties);
                 if (width > maxHorizontalSpaceUsed) {
                     maxHorizontalSpaceUsed = width;
                 }
 
                 if (width > maxHorizontalSpaceAvaliable) {
-                    var text = TextMeasurementService.getTailoredTextOrDefault(
-                        properties,
+                    let text = TextMeasurementService.getTailoredTextOrDefault(
+                        textProperties,
                         maxHorizontalSpaceAvaliable);
                     dp.label = text;
                 }
@@ -723,7 +770,7 @@ module powerbi.visuals {
                 totalSpaceOccupiedThusFar += verticalLegendHeight;
 
                 if (totalSpaceOccupiedThusFar > parentHeight) {
-                    dataPoints.length = i; // fast trim
+                    numberOfItems = i;
                     break;
                 }
             }
@@ -739,21 +786,23 @@ module powerbi.visuals {
                 this.viewport.width = this.lastCalculatedWidth;
             }
 
-            navigationArrows.forEach(d => d.x = this.lastCalculatedWidth / 2);
-            this.updateNavigationArrowLayout(navigationArrows, dataPointsLength, dataPoints.length);
+            this.visibleLegendHeight = totalSpaceOccupiedThusFar;
 
-            return dataPoints;
+            navigationArrows.forEach(d => d.x = this.lastCalculatedWidth / 2);
+            this.updateNavigationArrowLayout(navigationArrows, dataPointsLength, numberOfItems);
+
+            return numberOfItems;
         }
 
         private drawNavigationArrows(layout: NavigationArrow[]) {
-            var arrows = this.svg.selectAll(SVGLegend.NavigationArrow.selector)
+            let arrows = this.group.selectAll(SVGLegend.NavigationArrow.selector)
                 .data(layout);
 
             arrows
                 .enter()
                 .append('g')
                 .on('click', (d: NavigationArrow) => {
-                    var pos = this.legendDataStartIndex;
+                    let pos = this.legendDataStartIndex;
                     this.legendDataStartIndex = d.type === NavigationArrowType.Increase
                         ? pos + this.arrowPosWindow : pos - this.arrowPosWindow;
                     this.drawLegendInternal(this.data, this.parentViewport, false);
@@ -776,6 +825,20 @@ module powerbi.visuals {
             switch (orientation) {
                 case LegendPosition.Top:
                 case LegendPosition.Bottom:
+                case LegendPosition.BottomCenter:
+                case LegendPosition.TopCenter:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private isCentered(orientation: LegendPosition): boolean {
+            switch (orientation) {
+                case LegendPosition.BottomCenter:
+                case LegendPosition.LeftCenter:
+                case LegendPosition.RightCenter:
+                case LegendPosition.TopCenter:
                     return true;
                 default:
                     return false;
@@ -784,6 +847,14 @@ module powerbi.visuals {
 
         public reset(): void {
             // Intentionally left blank. 
+        }
+
+        private static getTextProperties(isTitle: boolean, text?: string, fontSize?: number): TextProperties {
+            return {
+                text: text,
+                fontFamily: isTitle ? SVGLegend.DefaultTitleFontFamily : SVGLegend.DefaultFontFamily,
+                fontSize: PixelConverter.fromPoint(fontSize || SVGLegend.DefaultFontSizeInPt)
+            };
         }
     }
 
@@ -824,13 +895,13 @@ module powerbi.visuals {
 
         public drawLegend(legendData: LegendData) {
             debug.assertValue(legendData, 'legendData');
-            var data = legendData.dataPoints;
+            let data = legendData.dataPoints;
             debug.assertValue(data, 'dataPoints');
             if (data.length < 1) return;
-            var legendContainerDiv = this.legendContainerDiv;
+            let legendContainerDiv = this.legendContainerDiv;
             if (!legendContainerDiv) {
                 if (!data.length) return;
-                var divToPrepend = $('<div></div>')
+                let divToPrepend = $('<div></div>')
                     .height(this.getMargins().height)
                     .addClass(CartesianChartInteractiveLegend.LegendContainerClass);
                 // Prepending, as legend should always be on topmost visual.
@@ -867,12 +938,12 @@ module powerbi.visuals {
          */
         private drawTitle(data: LegendDataPoint[]): void {
             debug.assert(data && data.length > 0, 'data is null or empty');
-            var titleDiv: D3.Selection = this.legendContainerDiv.selectAll('div.' + CartesianChartInteractiveLegend.LegendTitleClass);
-            var item: D3.UpdateSelection = titleDiv.data([data[0]]);
+            let titleDiv: D3.Selection = this.legendContainerDiv.selectAll('div.' + CartesianChartInteractiveLegend.LegendTitleClass);
+            let item: D3.UpdateSelection = titleDiv.data([data[0]]);
 
             // Enter
-            var itemEnter: D3.EnterSelection = item.enter();
-            var titleDivEnter: D3.Selection = itemEnter.append('div').attr('class', CartesianChartInteractiveLegend.LegendTitleClass);
+            let itemEnter: D3.EnterSelection = item.enter();
+            let titleDivEnter: D3.Selection = itemEnter.append('div').attr('class', CartesianChartInteractiveLegend.LegendTitleClass);
             titleDivEnter
                 .filter((d: LegendDataPoint) => d.iconOnlyOnLabel)
                 .append('span')
@@ -893,8 +964,8 @@ module powerbi.visuals {
         private drawLegendItems(data: LegendDataPoint[]): void {
             // Add Mesaures - the items of the category in the legend
             this.ensureLegendTableCreated();
-            var dataPointsMatrix: LegendDataPoint[][] = CartesianChartInteractiveLegend.splitArrayToOddEven(data);
-            var legendItemsContainer: D3.UpdateSelection = this.legendContainerDiv.select('tbody').selectAll('tr').data(dataPointsMatrix);
+            let dataPointsMatrix: LegendDataPoint[][] = CartesianChartInteractiveLegend.splitArrayToOddEven(data);
+            let legendItemsContainer: D3.UpdateSelection = this.legendContainerDiv.select('tbody').selectAll('tr').data(dataPointsMatrix);
 
             // trs is table rows. 
             // there are two table rows.
@@ -909,26 +980,26 @@ module powerbi.visuals {
             // 
 
             // Enter
-            var legendItemsEnter: D3.EnterSelection = legendItemsContainer.enter();
-            var rowEnter: D3.Selection = legendItemsEnter.append('tr');
-            var cellEnter: D3.Selection = rowEnter.selectAll('td')
+            let legendItemsEnter: D3.EnterSelection = legendItemsContainer.enter();
+            let rowEnter: D3.Selection = legendItemsEnter.append('tr');
+            let cellEnter: D3.Selection = rowEnter.selectAll('td')
                 .data((d: LegendDataPoint[]) => d, (d: LegendDataPoint) => d.label)
                 .enter()
                 .append('td').attr('class', CartesianChartInteractiveLegend.LegendItem);
-            var cellSpanEnter: D3.Selection = cellEnter.append('span');
+            let cellSpanEnter: D3.Selection = cellEnter.append('span');
             cellSpanEnter.filter((d: LegendDataPoint) => !d.iconOnlyOnLabel)
                 .append('span')
                 .html(CartesianChartInteractiveLegend.legendPlaceSelector)
                 .attr('class', CartesianChartInteractiveLegend.legendIconClass)
-                .style('color', (d: LegendDataPoint) => d.color)
                 .attr('white-space', 'nowrap');
             cellSpanEnter.append('span').attr('class', CartesianChartInteractiveLegend.legendItemNameClass);
             cellSpanEnter.append('span').attr('class', CartesianChartInteractiveLegend.legendItemMeasureClass);
 
             // Update
-            var legendCells: D3.UpdateSelection = legendItemsContainer.selectAll('td').data((d: LegendDataPoint[]) => d, (d: LegendDataPoint) => d.label);
+            let legendCells: D3.UpdateSelection = legendItemsContainer.selectAll('td').data((d: LegendDataPoint[]) => d, (d: LegendDataPoint) => d.label);
             legendCells.select('span.' + CartesianChartInteractiveLegend.legendItemNameClass).html((d: LegendDataPoint) => powerbi.visuals.TextUtil.removeBreakingSpaces(d.label));
             legendCells.select('span.' + CartesianChartInteractiveLegend.legendItemMeasureClass).html((d: LegendDataPoint) => '&nbsp;' + d.measure);
+            legendCells.select('span.' + CartesianChartInteractiveLegend.legendIconClass).style('color', (d: LegendDataPoint) => d.color);
 
             // Exit
             legendCells.exit().remove();
@@ -939,7 +1010,7 @@ module powerbi.visuals {
          */
         private ensureLegendTableCreated(): void {
             if (this.legendContainerDiv.select('div table').empty()) {
-                var legendTable: D3.Selection = this.legendContainerDiv.append('div').append('table');
+                let legendTable: D3.Selection = this.legendContainerDiv.append('div').append('table');
                 legendTable.style('table-layout', 'fixed').append('tbody');
                 // Setup Pan Gestures of the legend
                 this.setPanGestureOnLegend(legendTable);
@@ -950,26 +1021,26 @@ module powerbi.visuals {
          * Set Horizontal Pan gesture for the legend
          */
         private setPanGestureOnLegend(legendTable: D3.Selection): void {
-            var viewportWidth: number = $(this.legendContainerDiv.select('div:nth-child(2)')[0]).width();
-            var xscale: D3.Scale.LinearScale = d3.scale.linear().domain([0, viewportWidth]).range([0, viewportWidth]);
-            var zoom: D3.Behavior.Zoom = d3.behavior.zoom()
+            let viewportWidth: number = $(this.legendContainerDiv.select('div:nth-child(2)')[0]).width();
+            let xscale: D3.Scale.LinearScale = d3.scale.linear().domain([0, viewportWidth]).range([0, viewportWidth]);
+            let zoom: D3.Behavior.Zoom = d3.behavior.zoom()
                 .scaleExtent([1, 1]) // disable scaling
                 .x(xscale)
                 .on("zoom", () => {
                     // horizontal pan is valid only in case the legend items width are bigger than the viewport width
                     if ($(legendTable[0]).width() > viewportWidth) {
-                        var t: number[] = zoom.translate();
-                        var tx: number = t[0];
-                        var ty: number = t[1];
+                        let t: number[] = zoom.translate();
+                        let tx: number = t[0];
+                        let ty: number = t[1];
                         tx = Math.min(tx, 0);
                         tx = Math.max(tx, viewportWidth - $(legendTable[0]).width());
                         zoom.translate([tx, ty]);
-                    legendTable.style("-ms-transform",() => { /* IE 9 */
-                        return SVGUtil.translateXWithPixels(tx);
-                    });
-                    legendTable.style("-webkit-transform",() => { /* Safari */
-                        return SVGUtil.translateXWithPixels(tx);
-                    });
+                        legendTable.style("-ms-transform", () => { /* IE 9 */
+                            return SVGUtil.translateXWithPixels(tx);
+                        });
+                        legendTable.style("-webkit-transform", () => { /* Safari */
+                            return SVGUtil.translateXWithPixels(tx);
+                        });
                         legendTable.style("transform", () => {
                             return SVGUtil.translateXWithPixels(tx);
                         });
@@ -987,9 +1058,9 @@ module powerbi.visuals {
          * Even array will be the legend first line and Odd array will be the 2nd legend line 
          */
         private static splitArrayToOddEven(data: LegendDataPoint[]): LegendDataPoint[][] {
-            var oddData: LegendDataPoint[] = [];
-            var evenData: LegendDataPoint[] = [];
-            for (var i = 0; i < data.length; ++i) {
+            let oddData: LegendDataPoint[] = [];
+            let evenData: LegendDataPoint[] = [];
+            for (let i = 0; i < data.length; ++i) {
                 if (i % 2 === 0) {
                     evenData.push(data[i]);
                 }
@@ -1002,6 +1073,9 @@ module powerbi.visuals {
     }
 
     export module LegendData {
+
+        export var DefaultLegendLabelFillColor: string = '#666666';
+
         export function update(legendData: LegendData, legendObject: DataViewObject): void {
             debug.assertValue(legendData, 'legendData');
             debug.assertValue(legendObject, 'legendObject');
@@ -1013,8 +1087,19 @@ module powerbi.visuals {
             if (legendObject[legendProps.show] === false)
                 legendData.dataPoints = [];
 
-            if (legendObject[legendProps.show] === true && legendObject[legendProps.position] == null) {
+            if (legendObject[legendProps.show] === true && legendObject[legendProps.position] == null)
                 legendObject[legendProps.position] = legendPosition.top;
+
+            if (legendObject[legendProps.fontSize] !== undefined)
+                legendData.fontSize = <number>legendObject[legendProps.fontSize];
+
+            if (legendObject[legendProps.labelColor] !== undefined) {
+
+                let fillColor = <Fill>legendObject[legendProps.labelColor];
+
+                if (fillColor != null) {
+                    legendData.labelColor = fillColor.solid.color;
+                }
             }
 
             if (legendObject[legendProps.showTitle] === false)

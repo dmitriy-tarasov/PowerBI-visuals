@@ -24,32 +24,42 @@
  *  THE SOFTWARE.
  */
 
+/// <reference path="../_references.ts"/>
+
 module powerbi.visuals {
-    export var gaugeRoleNames = {
+    export const gaugeRoleNames = {
         y: 'Y',
         minValue: 'MinValue',
         maxValue: 'MaxValue',
         targetValue: 'TargetValue'
     };
 
-    export var gaugeCapabilities: VisualCapabilities = {
+    export const gaugeCapabilities: VisualCapabilities = {
         dataRoles: [
             {
                 name: gaugeRoleNames.y,
                 kind: VisualDataRoleKind.Measure,
                 displayName: data.createDisplayNameGetter('Role_DisplayName_Value'),
+                description: data.createDisplayNameGetter('Role_DisplayName_ValueDescription'),
+                requiredTypes: [{ numeric: true }, { integer: true }],
             }, {
                 name: gaugeRoleNames.minValue,
                 kind: VisualDataRoleKind.Measure,
                 displayName: data.createDisplayNameGetter('Role_DisplayName_MinValue'),
+                description: data.createDisplayNameGetter('Role_DisplayName_MinValueDescription'),
+                requiredTypes: [{ numeric: true }, { integer: true }],
             }, {
                 name: gaugeRoleNames.maxValue,
                 kind: VisualDataRoleKind.Measure,
                 displayName: data.createDisplayNameGetter('Role_DisplayName_MaxValue'),
+                description: data.createDisplayNameGetter('Role_DisplayName_MaxValueDescription'),
+                requiredTypes: [{ numeric: true }, { integer: true }],
             }, {
                 name: gaugeRoleNames.targetValue,
                 kind: VisualDataRoleKind.Measure,
                 displayName: data.createDisplayNameGetter('Role_DisplayName_TargetValue'),
+                description: data.createDisplayNameGetter('Role_DisplayName_TargetValueDescription'),
+                requiredTypes: [{ numeric: true }, { integer: true }],
             }
         ],
         objects: {
@@ -59,7 +69,70 @@ module powerbi.visuals {
                         type: { formatting: { formatString: true } },
                     },
                 },
-            }
+            },
+            axis: {
+                displayName: data.createDisplayNameGetter('Visual_Gauge_Axis'),
+                properties: {
+                    min: {
+                        displayName: data.createDisplayNameGetter('Visual_Gauge_Axis_Min'),
+                        type: { numeric: true }
+                    },
+                    max: {
+                        displayName: data.createDisplayNameGetter('Visual_Gauge_Axis_Max'),
+                        type: { numeric: true }
+                    },
+                    target: {
+                        displayName: data.createDisplayNameGetter('Visual_Gauge_Axis_Target'),
+                        type: { numeric: true }
+                    },
+                },
+            },
+            labels: {
+                displayName: data.createDisplayNameGetter('Visual_DataPointsLabels'),
+                properties: {
+                    show: {
+                        type: { bool: true }
+                    },
+                    color: {
+                        displayName: data.createDisplayNameGetter('Visual_LabelsFill'),
+                        type: { fill: { solid: { color: true } } }
+                    },
+                    labelDisplayUnits: {
+                        displayName: data.createDisplayNameGetter('Visual_DisplayUnits'),
+                        type: { formatting: { labelDisplayUnits: true } }
+                    },
+                    labelPrecision: {
+                        displayName: data.createDisplayNameGetter('Visual_Precision'),
+                        placeHolderText: data.createDisplayNameGetter('Visual_Precision_Auto'),
+                        type: { numeric: true }
+                    },
+                    fontSize: {
+                        displayName: data.createDisplayNameGetter('Visual_TextSize'),
+                        type: { formatting: { fontSize: true } }
+                    },
+                },
+            },
+            calloutValue: {
+                displayName: data.createDisplayNameGetter('Visual_Gauge_CalloutValue'),
+                properties: {
+                    show: {
+                        type: { bool: true }
+                    },
+                    color: {
+                        displayName: data.createDisplayNameGetter('Visual_LabelsFill'),
+                        type: { fill: { solid: { color: true } } }
+                    },
+                    labelDisplayUnits: {
+                        displayName: data.createDisplayNameGetter('Visual_DisplayUnits'),
+                        type: { formatting: { labelDisplayUnits: true } }
+                    },
+                    labelPrecision: {
+                        displayName: data.createDisplayNameGetter('Visual_Precision'),
+                        placeHolderText: data.createDisplayNameGetter('Visual_Precision_Auto'),
+                        type: { numeric: true }
+                    },
+                },
+            },
         },
         dataViewMappings: [{
             conditions: [
@@ -76,6 +149,7 @@ module powerbi.visuals {
                 },
             },
         }],
+        supportsSelection: false,
     };
 
 }

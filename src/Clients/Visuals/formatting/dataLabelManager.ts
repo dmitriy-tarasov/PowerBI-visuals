@@ -29,6 +29,7 @@
 module powerbi {
 
     import shapes = powerbi.visuals.shapes;
+    import IRect = powerbi.visuals.IRect;
 
     /** Defines possible content positions.  */
     export enum ContentPositions {
@@ -172,7 +173,7 @@ module powerbi {
         anchorPoint?: shapes.IPoint;
 
         /** The rectangle to which label is anchored. */
-        anchorRect?: shapes.IRect;
+        anchorRect?: IRect;
 
         /** Disable label rendering and processing. */
         hideLabel?: boolean;
@@ -203,7 +204,7 @@ module powerbi {
     /** Interface used in internal arrange structures. */
     export interface IArrangeGridElementInfo {
         element: IDataLabelInfo;
-        rect: shapes.IRect;
+        rect: IRect;
     }
 
     /**
@@ -222,7 +223,7 @@ module powerbi {
 
         // The global settings for all labels. 
         // They can be oweridden by each label we add into the panel, because contains same properties.
-        private _defaultSettings: IDataLabelSettings = {
+        private defaultDataLabelSettings: IDataLabelSettings = {
             anchorMargin: DataLabelManager.DefaultAnchorMargin,
             anchorRectOrientation: RectOrientation.None,
             contentPosition: ContentPositions.BottomCenter,
@@ -233,45 +234,38 @@ module powerbi {
             opacity: 1
         };
 
-        /**
-        * Initializes a new instance of the DataLabelsPanel class.
-        * @constructor 	
-        */
-        constructor() {
-        }
-
         public get defaultSettings(): IDataLabelSettings {
-            return this._defaultSettings;
+            return this.defaultDataLabelSettings;
         }
 
         /** Arranges the lables position and visibility*/
         public hideCollidedLabels(viewport: IViewport, data: any[], layout: any, addTransform: boolean = false): powerbi.visuals.LabelEnabledDataPoint[] {
 
             // Split size into a grid
-            var arrangeGrid = new DataLabelArrangeGrid(viewport, data, layout);
-            var filteredData = [];
-            var transform: shapes.IVector = { x: 0, y: 0 };
+            let arrangeGrid = new DataLabelArrangeGrid(viewport, data, layout);
+            let filteredData = [];
+            let transform: shapes.IVector = { x: 0, y: 0 };
 
             if (addTransform) {
                 transform.x = viewport.width / 2;
                 transform.y = viewport.height / 2;
             }
 
-            for (var i = 0, len = data.length; i < len; i++) {
+            for (let i = 0, len = data.length; i < len; i++) {
 
                 // Filter unwanted data points
                 if (!layout.filter(data[i]))
                     continue;
 
                 // Set default values where properties values are undefined
-                var info = this.getLabelInfo(data[i]);
+                let info = this.getLabelInfo(data[i]);
 
                 info.anchorPoint = {
                     x: layout.labelLayout.x(data[i]) + transform.x,
                     y: layout.labelLayout.y(data[i]) + transform.y,
                 };
 
-                var position: shapes.IRect = this.calculateContentPosition(info, info.contentPosition, data[i].size, info.anchorMargin);
+                let position: IRect = this.calculateContentPosition(info, info.contentPosition, data[i].size, info.anchorMargin);
 
                 if (DataLabelManager.isValid(position) && !this.hasCollisions(arrangeGrid, info, position, viewport)) {
                     data[i].labelX = position.left - transform.x;
@@ -294,7 +288,7 @@ module powerbi {
          */
         public getLabelInfo(source: IDataLabelInfo): IDataLabelInfo {
 
-            var settings = this._defaultSettings;
+            let settings = this.defaultDataLabelSettings;
             source.anchorMargin = source.anchorMargin !== undefined ? source.anchorMargin : settings.anchorMargin;
             source.anchorRectOrientation = source.anchorRectOrientation !== undefined ? source.anchorRectOrientation : settings.anchorRectOrientation;
             source.contentPosition = source.contentPosition !== undefined ? source.contentPosition : settings.contentPosition;
@@ -310,8 +304,8 @@ module powerbi {
         /**
         * (Private) Calculates element position using anchor point..
         */
-        private calculateContentPositionFromPoint(anchorPoint: shapes.IPoint, contentPosition: ContentPositions, contentSize: shapes.ISize, offset: number): shapes.IRect {
-            var position: shapes.IPoint = { x: 0, y: 0 };
+        private calculateContentPositionFromPoint(anchorPoint: shapes.IPoint, contentPosition: ContentPositions, contentSize: shapes.ISize, offset: number): IRect {
+            let position: shapes.IPoint = { x: 0, y: 0 };
             if (anchorPoint) {
 
                 if (anchorPoint.x !== undefined && isFinite(anchorPoint.x)) {
@@ -392,7 +386,7 @@ module powerbi {
         }
 
         /** (Private) Calculates element position using anchor rect. */
-        private calculateContentPositionFromRect(anchorRect: shapes.IRect, anchorRectOrientation: RectOrientation, contentPosition: ContentPositions, contentSize: shapes.ISize, offset: number): shapes.IRect {
+        private calculateContentPositionFromRect(anchorRect: IRect, anchorRectOrientation: RectOrientation, contentPosition: ContentPositions, contentSize: shapes.ISize, offset: number): IRect {
 
             switch (contentPosition) {
                 case ContentPositions.InsideCenter:
@@ -413,7 +407,7 @@ module powerbi {
         }
 
         /** (Private) Calculates element inside center position using anchor rect. */
-        private handleInsideCenterPosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: shapes.IRect, offset: number): shapes.IRect {
+        private handleInsideCenterPosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: IRect, offset: number): IRect {
             switch (anchorRectOrientation) {
                 case RectOrientation.VerticalBottomTop:
                 case RectOrientation.VerticalTopBottom:
@@ -426,7 +420,7 @@ module powerbi {
         }
 
         /** (Private) Calculates element inside end position using anchor rect. */
-        private handleInsideEndPosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: shapes.IRect, offset: number): shapes.IRect {
+        private handleInsideEndPosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: IRect, offset: number): IRect {
             switch (anchorRectOrientation) {
                 case RectOrientation.VerticalBottomTop:
                     return LocationConverter.topInside(contentSize, anchorRect, offset);
@@ -441,7 +435,7 @@ module powerbi {
         }
 
         /** (Private) Calculates element inside base position using anchor rect. */
-        private handleInsideBasePosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: shapes.IRect, offset: number): shapes.IRect {
+        private handleInsideBasePosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: IRect, offset: number): IRect {
             switch (anchorRectOrientation) {
                 case RectOrientation.VerticalBottomTop:
                     return LocationConverter.bottomInside(contentSize, anchorRect, offset);
@@ -456,7 +450,7 @@ module powerbi {
         }
 
         /** (Private) Calculates element outside end position using anchor rect. */
-        private handleOutsideEndPosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: shapes.IRect, offset: number): shapes.IRect {
+        private handleOutsideEndPosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: IRect, offset: number): IRect {
             switch (anchorRectOrientation) {
                 case RectOrientation.VerticalBottomTop:
                     return LocationConverter.topOutside(contentSize, anchorRect, offset);
@@ -471,7 +465,7 @@ module powerbi {
         }
 
         /** (Private) Calculates element outside base position using anchor rect. */
-        private handleOutsideBasePosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: shapes.IRect, offset: number): shapes.IRect {
+        private handleOutsideBasePosition(anchorRectOrientation: RectOrientation, contentSize: shapes.ISize, anchorRect: IRect, offset: number): IRect {
             switch (anchorRectOrientation) {
                 case RectOrientation.VerticalBottomTop:
                     return LocationConverter.bottomOutside(contentSize, anchorRect, offset);
@@ -486,7 +480,7 @@ module powerbi {
         }
 
         /**  (Private) Calculates element position. */
-        private calculateContentPosition(anchoredElementInfo: IDataLabelInfo, contentPosition: ContentPositions, contentSize: shapes.ISize, offset: number): shapes.IRect {
+        private calculateContentPosition(anchoredElementInfo: IDataLabelInfo, contentPosition: ContentPositions, contentSize: shapes.ISize, offset: number): IRect {
 
             if (contentPosition !== ContentPositions.InsideEnd &&
                 contentPosition !== ContentPositions.InsideCenter &&
@@ -511,14 +505,14 @@ module powerbi {
         }
 
         /** (Private) Check for collisions. */
-        private hasCollisions(arrangeGrid: DataLabelArrangeGrid, info: IDataLabelInfo, position: shapes.IRect, size: shapes.ISize): boolean {
-            var rect = shapes.Rect;
+        private hasCollisions(arrangeGrid: DataLabelArrangeGrid, info: IDataLabelInfo, position: IRect, size: shapes.ISize): boolean {
+            let rect = shapes.Rect;
 
             if (arrangeGrid.hasConflict(position)) {
                 return true;
             }
             // Since we divide the height by 2 we add it back to the top of the view port so labels won't be cut off
-            var intersection = { left: 0, top: position.height / 2, width: size.width, height: size.height };
+            let intersection = { left: 0, top: position.height / 2, width: size.width, height: size.height };
             intersection = rect.inflate(intersection, { left: DataLabelManager.InflateAmount, top: 0, right: DataLabelManager.InflateAmount, bottom: 0 });
 
             intersection = rect.intersect(intersection, position);
@@ -527,7 +521,7 @@ module powerbi {
                 // Empty rectangle means there is a collision
                 return true;
 
-            var lessWithPrecision = powerbi.Double.lessWithPrecision;
+            let lessWithPrecision = powerbi.Double.lessWithPrecision;
 
             switch (info.outsidePlacement) {
                 // D3 positions the label in the middle by default.
@@ -543,7 +537,7 @@ module powerbi {
             return false;
         }
 
-        public static isValid(rect: shapes.IRect): boolean {
+        public static isValid(rect: IRect): boolean {
             return !shapes.Rect.isEmpty(rect) && (rect.width > 0 && rect.height > 0);
         }
     }
@@ -553,11 +547,11 @@ module powerbi {
     */
     export class DataLabelArrangeGrid {
 
-        private _grid: IArrangeGridElementInfo[][][] = [];
+        private grid: IArrangeGridElementInfo[][][] = [];
         //size of a grid cell 
-        private _cellSize: shapes.ISize;
-        private _rowCount: number;
-        private _colCount: number;
+        private cellSize: shapes.ISize;
+        private rowCount: number;
+        private colCount: number;
 
         private static ARRANGEGRID_MIN_COUNT = 1;
         private static ARRANGEGRID_MAX_COUNT = 100;
@@ -568,56 +562,56 @@ module powerbi {
          */
         constructor(size: shapes.ISize, elements: any[], layout: powerbi.visuals.ILabelLayout) {
             if (size.width === 0 || size.height === 0) {
-                this._cellSize = size;
-                this._rowCount = this._colCount = 0;
+                this.cellSize = size;
+                this.rowCount = this.colCount = 0;
             }
 
-            var baseProperties: TextProperties = {
+            let baseProperties: TextProperties = {
                 fontFamily: powerbi.visuals.dataLabelUtils.LabelTextProperties.fontFamily,
                 fontSize: powerbi.visuals.dataLabelUtils.LabelTextProperties.fontSize,
                 fontWeight: powerbi.visuals.dataLabelUtils.LabelTextProperties.fontWeight,
             };
 
-            var textHeight = TextMeasurementService.estimateSvgTextHeight(baseProperties);
-
-            //sets the _cell size to be twice of the Max with and Max height of the elements 
-            this._cellSize = { width: 0, height: 0 };
-            for (var i = 0, len = elements.length; i < len; i++) {
-                var child = elements[i];
+            //sets the cell size to be twice of the Max with and Max height of the elements 
+            this.cellSize = { width: 0, height: 0 };
+            for (let i = 0, len = elements.length; i < len; i++) {
+                let child = elements[i];
 
                 // Fill label field
                 child.labeltext = layout.labelText(child);
 
-                var properties: TextProperties = Prototype.inherit(baseProperties);
+                let properties: TextProperties = Prototype.inherit(baseProperties);
                 properties.text = child.labeltext;
+                properties.fontSize = (child.data) ? child.data.labelFontSize :
+                    child.labelFontSize ? child.labelFontSize : powerbi.visuals.dataLabelUtils.LabelTextProperties.fontSize;
 
                 child.size = {
                     width: TextMeasurementService.measureSvgTextWidth(properties),
-                    height: textHeight,
+                    height: TextMeasurementService.estimateSvgTextHeight(properties),
                 };
 
-                var w = child.size.width * 2;
-                var h = child.size.height * 2;
-                if (w > this._cellSize.width)
-                    this._cellSize.width = w;
-                if (h > this._cellSize.height)
-                    this._cellSize.height = h;
+                let w = child.size.width * 2;
+                let h = child.size.height * 2;
+                if (w > this.cellSize.width)
+                    this.cellSize.width = w;
+                if (h > this.cellSize.height)
+                    this.cellSize.height = h;
             }
 
-            if (this._cellSize.width === 0)
-                this._cellSize.width = size.width;
-            if (this._cellSize.height === 0)
-                this._cellSize.height = size.height;
+            if (this.cellSize.width === 0)
+                this.cellSize.width = size.width;
+            if (this.cellSize.height === 0)
+                this.cellSize.height = size.height;
 
-            this._colCount = this.getGridRowColCount(this._cellSize.width, size.width, DataLabelArrangeGrid.ARRANGEGRID_MIN_COUNT, DataLabelArrangeGrid.ARRANGEGRID_MAX_COUNT);
-            this._rowCount = this.getGridRowColCount(this._cellSize.height, size.height, DataLabelArrangeGrid.ARRANGEGRID_MIN_COUNT, DataLabelArrangeGrid.ARRANGEGRID_MAX_COUNT);
-            this._cellSize.width = size.width / this._colCount;
-            this._cellSize.height = size.height / this._rowCount;
+            this.colCount = this.getGridRowColCount(this.cellSize.width, size.width, DataLabelArrangeGrid.ARRANGEGRID_MIN_COUNT, DataLabelArrangeGrid.ARRANGEGRID_MAX_COUNT);
+            this.rowCount = this.getGridRowColCount(this.cellSize.height, size.height, DataLabelArrangeGrid.ARRANGEGRID_MIN_COUNT, DataLabelArrangeGrid.ARRANGEGRID_MAX_COUNT);
+            this.cellSize.width = size.width / this.colCount;
+            this.cellSize.height = size.height / this.rowCount;
 
-            var grid = this._grid;
-            for (var x = 0; x < this._colCount; x++) {
+            let grid = this.grid;
+            for (let x = 0; x < this.colCount; x++) {
                 grid[x] = [];
-                for (var y = 0; y < this._rowCount; y++) {
+                for (let y = 0; y < this.rowCount; y++) {
                     grid[x][y] = [];
                 }
             }
@@ -628,11 +622,11 @@ module powerbi {
          * @param element The label element to register.
          * @param rect The label element position rectangle.
          */
-        public add(element: IDataLabelInfo, rect: shapes.IRect) {
-            var indexRect = this.getGridIndexRect(rect);
-            var grid = this._grid;
-            for (var x = indexRect.left; x < indexRect.right; x++) {
-                for (var y = indexRect.top; y < indexRect.bottom; y++) {
+        public add(element: IDataLabelInfo, rect: IRect) {
+            let indexRect = this.getGridIndexRect(rect);
+            let grid = this.grid;
+            for (let x = indexRect.left; x < indexRect.right; x++) {
+                for (let y = indexRect.top; y < indexRect.bottom; y++) {
                     grid[x][y].push({ element: element, rect: rect });
                 }
             }
@@ -643,15 +637,15 @@ module powerbi {
          * @param rect The rectengle to check.
          * @return True if conflict is detected.
          */
-        public hasConflict(rect: shapes.IRect): boolean {
-            var indexRect = this.getGridIndexRect(rect);
-            var grid = this._grid;
-            var isIntersecting = shapes.Rect.isIntersecting;
+        public hasConflict(rect: IRect): boolean {
+            let indexRect = this.getGridIndexRect(rect);
+            let grid = this.grid;
+            let isIntersecting = shapes.Rect.isIntersecting;
 
-            for (var x = indexRect.left; x < indexRect.right; x++) {
-                for (var y = indexRect.top; y < indexRect.bottom; y++) {
-                    for (var z = 0; z < grid[x][y].length; z++) {
-                        var item = grid[x][y][z];
+            for (let x = indexRect.left; x < indexRect.right; x++) {
+                for (let y = indexRect.top; y < indexRect.bottom; y++) {
+                    for (let z = 0; z < grid[x][y].length; z++) {
+                        let item = grid[x][y][z];
                         if (isIntersecting(item.rect, rect)) {
                             return true;
                         }
@@ -678,13 +672,13 @@ module powerbi {
          * @param rect The rectengle to check.
          * @return grid index as a thickness object.
          */
-        private getGridIndexRect(rect: shapes.IRect): shapes.IThickness {
-            var restrict = (n, min, max) => Math.min(Math.max(n, min), max);
+        private getGridIndexRect(rect: IRect): shapes.IThickness {
+            let restrict = (n, min, max) => Math.min(Math.max(n, min), max);
             return {
-                left: restrict(Math.floor(rect.left / this._cellSize.width), 0, this._colCount),
-                top: restrict(Math.floor(rect.top / this._cellSize.height), 0, this._rowCount),
-                right: restrict(Math.ceil((rect.left + rect.width) / this._cellSize.width), 0, this._colCount),
-                bottom: restrict(Math.ceil((rect.top + rect.height) / this._cellSize.height), 0, this._rowCount)
+                left: restrict(Math.floor(rect.left / this.cellSize.width), 0, this.colCount),
+                top: restrict(Math.floor(rect.top / this.cellSize.height), 0, this.rowCount),
+                right: restrict(Math.ceil((rect.left + rect.width) / this.cellSize.width), 0, this.colCount),
+                bottom: restrict(Math.ceil((rect.top + rect.height) / this.cellSize.height), 0, this.rowCount)
             };
         }
     }
@@ -694,7 +688,7 @@ module powerbi {
     */
     module LocationConverter {
 
-        export function topInside(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function topInside(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: rect.left + rect.width / 2.0 - size.width / 2.0,
                 top: rect.top + offset,
@@ -703,7 +697,7 @@ module powerbi {
             };
         }
 
-        export function bottomInside(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function bottomInside(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: rect.left + rect.width / 2.0 - size.width / 2.0,
                 top: (rect.top + rect.height) - size.height - offset,
@@ -712,7 +706,7 @@ module powerbi {
             };
         }
 
-        export function rightInside(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function rightInside(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: (rect.left + rect.width) - size.width - offset,
                 top: rect.top + rect.height / 2.0 - size.height / 2.0,
@@ -721,7 +715,7 @@ module powerbi {
             };
         }
 
-        export function leftInside(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function leftInside(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: rect.left + offset,
                 top: rect.top + rect.height / 2.0 - size.height / 2.0,
@@ -730,7 +724,7 @@ module powerbi {
             };
         }
 
-        export function topOutside(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function topOutside(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: rect.left + rect.width / 2.0 - size.width / 2.0,
                 top: rect.top - size.height - offset,
@@ -739,7 +733,7 @@ module powerbi {
             };
         }
 
-        export function bottomOutside(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function bottomOutside(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: rect.left + rect.width / 2.0 - size.width / 2.0,
                 top: (rect.top + rect.height) + offset,
@@ -748,7 +742,7 @@ module powerbi {
             };
         }
 
-        export function rightOutside(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function rightOutside(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: (rect.left + rect.width) + offset,
                 top: rect.top + rect.height / 2.0 - size.height / 2.0,
@@ -757,7 +751,7 @@ module powerbi {
             };
         }
 
-        export function leftOutside(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function leftOutside(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: rect.left - size.width - offset,
                 top: rect.top + rect.height / 2.0 - size.height / 2.0,
@@ -766,7 +760,7 @@ module powerbi {
             };
         }
 
-        export function middleHorizontal(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function middleHorizontal(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: rect.left + rect.width / 2.0 - size.width / 2.0 + offset,
                 top: rect.top + rect.height / 2.0 - size.height / 2.0,
@@ -775,7 +769,7 @@ module powerbi {
             };
         }
 
-        export function middleVertical(size: shapes.ISize, rect: shapes.IRect, offset: number): shapes.IRect {
+        export function middleVertical(size: shapes.ISize, rect: IRect, offset: number): IRect {
             return {
                 left: rect.left + rect.width / 2.0 - size.width / 2.0,
                 top: rect.top + rect.height / 2.0 - size.height / 2.0 + offset,

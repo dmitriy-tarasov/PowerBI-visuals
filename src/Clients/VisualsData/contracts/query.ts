@@ -40,6 +40,11 @@ module powerbi.data {
         Version?: number;
         From: EntitySource[];
         Where: QueryFilter[];
+    }    
+
+    export enum EntitySourceType {
+        Table = 0,
+        Pod = 1,
     }
 
     export interface EntitySource {
@@ -47,6 +52,7 @@ module powerbi.data {
         EntitySet?: string; // TODO: Remove this when Q&A Silverlight is removed and make Entity required
         Entity?: string;
         Schema?: string;
+        Type?: EntitySourceType;
     }
 
     export interface QueryFilter {
@@ -56,7 +62,7 @@ module powerbi.data {
 
     export interface QuerySortClause {
         Expression: QueryExpressionContainer;
-        Direction: QuerySortDirection;
+        Direction: SortDirection;
     }
 
     export interface QueryExpressionContainer {
@@ -66,6 +72,9 @@ module powerbi.data {
         Column?: QueryColumnExpression;
         Measure?: QueryMeasureExpression;
         Aggregation?: QueryAggregationExpression;
+        Hierarchy?: QueryHierarchyExpression;
+        HierarchyLevel?: QueryHierarchyLevelExpression;
+        PropertyVariationSource?: QueryPropertyVariationSourceExpression;
 
         // Logical
         And?: QueryBinaryExpression;
@@ -93,6 +102,11 @@ module powerbi.data {
         DateSpan?: QueryDateSpanExpression;
         DateAdd?: QueryDateAddExpression;
         Now?: QueryNowExpression;
+
+        // Default Values
+        DefaultValue?: QueryDefaultValueExpression;
+        AnyValue?: QueryAnyValueExpression;
+
         // TODO: Still need to add the rest of the QueryExpression types.
     }
 
@@ -114,6 +128,22 @@ module powerbi.data {
     export interface QueryAggregationExpression {
         Function: QueryAggregateFunction;
         Expression: QueryExpressionContainer;
+    }
+
+    export interface QueryHierarchyExpression {
+        Expression: QueryExpressionContainer;
+        Hierarchy: string;
+    }
+
+    export interface QueryHierarchyLevelExpression {
+        Expression: QueryExpressionContainer;
+        Level: string;
+    }
+
+    export interface QueryPropertyVariationSourceExpression {
+        Expression: QueryExpressionContainer;
+        Name: string;
+        Property: string;
     }
 
     export interface QueryBinaryExpression {
@@ -178,6 +208,10 @@ module powerbi.data {
 
     export interface QueryNowExpression { }
 
+    export interface QueryDefaultValueExpression { }
+
+    export interface QueryAnyValueExpression { }
+
     export enum TimeUnit {
         Day = 0,
         Week = 1,
@@ -196,11 +230,9 @@ module powerbi.data {
         Min = 3,
         Max = 4,
         CountNonNull = 5,
-    }
-
-    export enum QuerySortDirection {
-        Ascending = 1,
-        Descending = 2,
+        Median = 6,
+        StandardDeviation = 7,
+        Variance = 8,
     }
 
     export enum QueryComparisonKind {
@@ -211,9 +243,39 @@ module powerbi.data {
         LessThanOrEqual = 4,
     }
 
+    export interface DataQuery {
+        Commands: QueryCommand[];
+    }
+    
     export interface SemanticQueryDataShapeCommand {
         Query: QueryDefinition;
         Binding: DataShapeBinding;
+    }
+    
+    export interface QueryCommand {
+        SemanticQueryDataShapeCommand?: SemanticQueryDataShapeCommand;
+        ScriptVisualCommand?: ScriptVisualCommand;
+    }
+
+    export interface ScriptInputColumn {
+        /** The queryName of the corresponding Select from the associated SemanticQuery providing the data for this column. */ 
+        QueryName: string; 
+        /** The name of this column expected by the script. */
+        Name: string;
+    }
+
+    export interface ScriptInput {
+        VariableName?: string;
+        Columns?: ScriptInputColumn[];
+    }
+
+    export interface ScriptVisualCommand {
+        Script?: string;
+        RenderingEngine?: string;
+        ViewportWidthPx?: number;
+        ViewportHeightPx?: number;
+        Version?: number;
+        ScriptInput?: ScriptInput;
     }
 
     /** Defines semantic data types. */
@@ -263,6 +325,12 @@ module powerbi.data {
 
         /** The select projection name. */
         Name?: string;
+
+        /* If defined, this indicates the KPI class*/
+        kpiStatusGraphic?: string; // old version of kpi data
+
+        /* If defined, this indicates the KPI metadata*/
+        kpi?: DataViewKpiColumnMetadata;
     }
 
     export interface FilterMetadata {

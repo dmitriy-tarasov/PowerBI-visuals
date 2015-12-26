@@ -27,12 +27,13 @@
 /// <reference path="../_references.ts"/>
 
 module powerbi.visuals {
-    export var treemapCapabilities: VisualCapabilities = {
+    export const treemapCapabilities: VisualCapabilities = {
         dataRoles: [
             {
                 name: 'Group',
                 kind: VisualDataRoleKind.Grouping,
                 displayName: data.createDisplayNameGetter('Role_DisplayName_Group'),
+                description: data.createDisplayNameGetter('Role_DisplayName_GroupTreemapDescription')
             }, {
                 name: 'Details',
                 kind: VisualDataRoleKind.Grouping,
@@ -41,10 +42,14 @@ module powerbi.visuals {
                 name: 'Values',
                 kind: VisualDataRoleKind.Measure,
                 displayName: data.createDisplayNameGetter('Role_DisplayName_Values'),
+                description: data.createDisplayNameGetter('Role_DisplayName_ValuesDescription'),
+                requiredTypes: [{ numeric: true }, { integer: true }],
             }, {
                 name: 'Gradient',
                 kind: VisualDataRoleKind.Measure,
                 displayName: data.createDisplayNameGetter('Role_DisplayName_Gradient'),
+                description: data.createDisplayNameGetter('Role_DisplayName_GradientDescription'),
+                requiredTypes: [{ numeric: true }, { integer: true }],
             }
         ],
         objects: {
@@ -58,6 +63,7 @@ module powerbi.visuals {
             },
             legend: {
                 displayName: data.createDisplayNameGetter('Visual_Legend'),
+                description: data.createDisplayNameGetter('Visual_LegendDescription'),
                 properties: {
                     show: {
                         displayName: data.createDisplayNameGetter('Visual_Show'),
@@ -65,20 +71,32 @@ module powerbi.visuals {
                     },
                     position: {
                         displayName: data.createDisplayNameGetter('Visual_LegendPosition'),
-                        type: { formatting: { legendPosition: true } }
+                        description: data.createDisplayNameGetter('Visual_LegendPositionDescription'),
+                        type: { enumeration: legendPosition.type }
                     },
                     showTitle: {
                         displayName: data.createDisplayNameGetter('Visual_LegendShowTitle'),
+                        description: data.createDisplayNameGetter('Visual_LegendShowTitleDescription'),
                         type: { bool: true }
                     },
                     titleText: {
-                        displayName: data.createDisplayNameGetter('Visual_LegendTitleText'),
+                        displayName: data.createDisplayNameGetter('Visual_LegendName'),
+                        description: data.createDisplayNameGetter('Visual_LegendNameDescription'),
                         type: { text: true }
+                    },
+                    labelColor: {
+                        displayName: data.createDisplayNameGetter('Visual_LegendTitleColor'),
+                        type: { fill: { solid: { color: true } } }
+                    },
+                    fontSize: {
+                        displayName: data.createDisplayNameGetter('Visual_TextSize'),
+                        type: { formatting: { fontSize: true } }
                     }
                 }
             },
             dataPoint: {
                 displayName: data.createDisplayNameGetter('Visual_DataPoint'),
+                description: data.createDisplayNameGetter('Visual_DataPointDescription'),
                 properties: {                   
                     fill: {
                         type: { fill: { solid: { color: true } } }
@@ -98,32 +116,33 @@ module powerbi.visuals {
             },
             labels: {
                 displayName: data.createDisplayNameGetter('Visual_DataPointsLabels'),
+                description: data.createDisplayNameGetter('Visual_DataPointsLabelsDescription'),
                 properties: {
                     show: {
                         displayName: data.createDisplayNameGetter('Visual_Show'),
-                        type: { bool: true, mainShow: true }
+                        type: { bool: true }
                     },
                     color: {
                         displayName: data.createDisplayNameGetter('Visual_LabelsFill'),
+                        description: data.createDisplayNameGetter('Visual_LabelsFillDescription'),
                         type: { fill: { solid: { color: true } } }
-                    },
-                    //TODO: enable that when descriptors are ready
-                    /*labelPosition: {
-                        displayName: data.createDisplayNameGetter('Visual_Position'),
-                        type: { labelPosition: true }
                     },
                     labelDisplayUnits: {
                         displayName: data.createDisplayNameGetter('Visual_DisplayUnits'),
-                        type: { labelDisplayUnits: true }
+                        description: data.createDisplayNameGetter('Visual_DisplayUnitsDescription'),
+                        type: { formatting: { labelDisplayUnits: true } }
                     },
                     labelPrecision: {
                         displayName: data.createDisplayNameGetter('Visual_Precision'),
-                        type: { labelPrecision: true }
-                    },*/
+                        description: data.createDisplayNameGetter('Visual_PrecisionDescription'),
+                        placeHolderText: data.createDisplayNameGetter('Visual_Precision_Auto'),
+                        type: { numeric: true }
+                    },
                 }
             },
             categoryLabels: {
                 displayName: data.createDisplayNameGetter('Visual_CategoryLabels'),
+                description: data.createDisplayNameGetter('Visual_CategoryLabelsDescription'),
                 properties: {
                     show: {
                         type: { bool: true }
@@ -155,12 +174,15 @@ module powerbi.visuals {
         sorting: {
             custom: {},
             implicit: {
-                clauses: [{ role: 'Values', direction: data.QuerySortDirection.Descending }]
+                clauses: [{ role: 'Values', direction: SortDirection.Descending }]
             },
+        },
+        drilldown: {
+            roles: ['Group']
         },
     };
     
-    export var treemapProps = {
+    export const treemapProps = {
         general: {
             formatString: <DataViewObjectPropertyIdentifier>{ objectName: 'general', propertyName: 'formatString' },
         },
@@ -172,6 +194,13 @@ module powerbi.visuals {
             position: <DataViewObjectPropertyIdentifier>{ objectName: 'legend', propertyName: 'position' },
             showTitle: <DataViewObjectPropertyIdentifier>{ objectName: 'legend', propertyName: 'showTitle' },
             titleText: <DataViewObjectPropertyIdentifier>{ objectName: 'legend', propertyName: 'titleText' },
+            labelColor: <DataViewObjectPropertyIdentifier>{ objectName: 'legend', propertyName: 'labelColor' },
+        },
+        labels: {
+            show: <DataViewObjectPropertyIdentifier>{ objectName: 'labels', propertyName: 'show' },
+            color: <DataViewObjectPropertyIdentifier>{ objectName: 'labels', propertyName: 'color' },
+            labelDisplayUnits: <DataViewObjectPropertyIdentifier>{ objectName: 'labels', propertyName: 'labelDisplayUnits' },
+            labelPrecision: <DataViewObjectPropertyIdentifier>{ objectName: 'labels', propertyName: 'labelPrecision' },
         },
         categoryLabels: {
             show: <DataViewObjectPropertyIdentifier>{ objectName: 'categoryLabels', propertyName: 'show' },

@@ -35,8 +35,9 @@ module powerbi.visuals {
 
         // TODO: Remove this once all visuals have implemented update.
         private dataViews: DataView[];
+        private formatter: IValueFormatter;
 
-        public constructor(svg?: D3.Selection, animator?: IAnimator) {
+        public constructor(svg?: D3.Selection, animator?: IGenericAnimator) {
             super('animatedNumber');
 
             if (svg)
@@ -47,7 +48,7 @@ module powerbi.visuals {
 
         public init(options: VisualInitOptions) {
             this.options = options;
-            var element = options.element;
+            let element = options.element;
 
             if (!this.svg)
                 this.svg = d3.select(element.get(0)).append('svg');
@@ -59,7 +60,7 @@ module powerbi.visuals {
         }
 
         public updateViewportDependantProperties() {
-            var viewport = this.currentViewport;
+            let viewport = this.currentViewport;
             this.svg.attr('width', viewport.width)
                 .attr('height', viewport.height);
         }
@@ -68,19 +69,23 @@ module powerbi.visuals {
             debug.assertValue(options, 'options');
 
             this.currentViewport = options.viewport;
-            var dataViews = this.dataViews = options.dataViews;
+            let dataViews = this.dataViews = options.dataViews;
 
             if (!dataViews || !dataViews[0]) {
                 return;
             }
 
-            var dataView = dataViews[0];
+            let dataView = dataViews[0];
             this.updateViewportDependantProperties();
             this.getMetaDataColumn(dataView);
-            var newValue = dataView && dataView.single ? dataView.single.value : 0;
+            let newValue = dataView && dataView.single ? dataView.single.value : 0;
             if (newValue != null) {
-                this.updateInternal(newValue, options.suppressAnimations, true);
+                this.updateInternal(newValue, options.suppressAnimations, true, this.formatter);
             }
+        }
+
+        public setFormatter(formatter?: IValueFormatter): void {
+            this.formatter = formatter;
         }
 
         public onDataChanged(options: VisualDataChangedOptions): void {
@@ -106,9 +111,9 @@ module powerbi.visuals {
             return true;
         }
 
-        private updateInternal(target: number, suppressAnimations: boolean, forceUpdate: boolean = false) {
-            var start = this.value || 0;
-            var duration = AnimatorCommon.GetAnimationDuration(this.animator, suppressAnimations);
+        private updateInternal(target: number, suppressAnimations: boolean, forceUpdate: boolean = false, formatter?: IValueFormatter) {
+            let start = this.value || 0;
+            let duration = AnimatorCommon.GetAnimationDuration(this.animator, suppressAnimations);
 
             this.doValueTransition(
                 start,
@@ -116,7 +121,8 @@ module powerbi.visuals {
                 /*displayUnitSystemType*/ null,
                 this.options.animation,
                 duration,
-                forceUpdate);
+                forceUpdate,
+                formatter);
 
             this.value = target;
         }

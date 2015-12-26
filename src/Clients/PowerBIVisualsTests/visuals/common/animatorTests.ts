@@ -27,19 +27,19 @@
 /// <reference path="../../_references.ts"/>
 
 module powerbitests {
-    import Animator = powerbi.visuals.Animator;
+    import BaseAnimator = powerbi.visuals.BaseAnimator;
     import IAnimatorOptions = powerbi.visuals.IAnimatorOptions;
     import AnimatorCommon = powerbi.visuals.AnimatorCommon;
 
     describe("Animator tests", () => {
         it("default animation duration", () => {
-            var animator = new Animator();
+            let animator = new BaseAnimator();
             expect(animator.getDuration()).toBe(AnimatorCommon.MinervaAnimationDuration);
         });
 
         it("override default animation duration", () => {
-            var duration = 500;
-            var animator = new Animator(<IAnimatorOptions>{
+            let duration = 500;
+            let animator = new BaseAnimator(<IAnimatorOptions>{
                 duration: duration
             });
             expect(animator.getDuration()).toBe(duration);
@@ -52,54 +52,54 @@ module powerbitests {
 
             describe("without animator", () => {
                 it("undefined: IAnimator, undefined: suppressAnimations", () => {
-                    var duration = AnimatorCommon.GetAnimationDuration(undefined, undefined);
+                    let duration = AnimatorCommon.GetAnimationDuration(undefined, undefined);
                     expect(duration).toBe(0);
                 });
 
                 it("null: IAnimator, null: suppressAnimations", () => {
-                    var duration = AnimatorCommon.GetAnimationDuration(null, null);
+                    let duration = AnimatorCommon.GetAnimationDuration(null, null);
                     expect(duration).toBe(0);
                 });
 
                 it("null: IAnimator, false: suppressAnimations", () => {
-                    var duration = AnimatorCommon.GetAnimationDuration(null, false);
+                    let duration = AnimatorCommon.GetAnimationDuration(null, false);
                     expect(duration).toBe(0);
                 });
 
                 it("null: IAnimator, true: suppressAnimations", () => {
-                    var duration = AnimatorCommon.GetAnimationDuration(null, true);
+                    let duration = AnimatorCommon.GetAnimationDuration(null, true);
                     expect(duration).toBe(0);
                 });
             });
 
             describe("with animator", () => {
-                var animator;
+                let animator;
 
-                var defaultDuration: number = 333;
+                let defaultDuration: number = 333;
 
                 beforeEach(() => {
-                    animator = new Animator(<IAnimatorOptions>{
+                    animator = new BaseAnimator(<IAnimatorOptions>{
                         duration: defaultDuration
                     });
                 });
 
                 it("animator: IAnimator, undefined: suppressAnimations", () => {
-                    var duration = AnimatorCommon.GetAnimationDuration(animator, undefined);
+                    let duration = AnimatorCommon.GetAnimationDuration(animator, undefined);
                     expect(duration).toBe(defaultDuration);
                 });
 
                 it("animator: IAnimator, null: suppressAnimations", () => {
-                    var duration = AnimatorCommon.GetAnimationDuration(animator, null);
+                    let duration = AnimatorCommon.GetAnimationDuration(animator, null);
                     expect(duration).toBe(defaultDuration);
                 });
 
                 it("animator: IAnimator, false: suppressAnimations", () => {
-                    var duration = AnimatorCommon.GetAnimationDuration(animator, false);
+                    let duration = AnimatorCommon.GetAnimationDuration(animator, false);
                     expect(duration).toBe(defaultDuration);
                 });
 
                 it("animator: IAnimator, true: suppressAnimations", () => {
-                    var duration = AnimatorCommon.GetAnimationDuration(animator, true);
+                    let duration = AnimatorCommon.GetAnimationDuration(animator, true);
                     expect(duration).toBe(0);
                 });
             });

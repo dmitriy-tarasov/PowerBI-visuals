@@ -31,41 +31,79 @@ module powerbi.visuals {
 
     export interface ImageDataViewObjects extends DataViewObjects {
         general: ImageDataViewObject;
+        imageScaling: ImageScalingDataViewObject;
     }
 
     export interface ImageDataViewObject extends DataViewObject {
         imageUrl: string;
     }
 
+    export interface ImageScalingDataViewObject extends DataViewObject {
+        imageScalingType: string;
+    }
+
     export class ImageVisual implements IVisual {
 
         private element: JQuery;
+        private imageBackgroundElement: JQuery;
+        private scalingType: string = imageScalingType.normal;
 
         public init(options: VisualInitOptions) {
             this.element = options.element;
         }
 
-        public onDataChanged(options: VisualDataChangedOptions): void {
-            this.element.empty();
+        public enumerateObjectInstances(options: EnumerateVisualObjectInstancesOptions): VisualObjectInstance[] {
+            switch (options.objectName) {
+                case 'imageScaling':
+                    return this.enumerateImageScaling();
+            }
+            return null;
+        }
 
-            var dataViews = options.dataViews;
+        private enumerateImageScaling(): VisualObjectInstance[] {
+            return [{
+                selector: null,
+                objectName: 'imageScaling',
+                properties: {
+                    imageScalingType: this.scalingType,
+                }
+            }];
+        }
+
+        public update(options: VisualUpdateOptions): void {
+            let dataViews = options.dataViews;
             if (!dataViews || dataViews.length === 0)
                 return;
 
-            var objects = <ImageDataViewObjects>dataViews[0].metadata.objects;
+            let objects = <ImageDataViewObjects>dataViews[0].metadata.objects;
             if (!objects || !objects.general)
                 return;
 
-            var div = $("<div class='imageBackground' />");
+            let div: JQuery = this.imageBackgroundElement;
+            if (!div) {
+                div = $("<div class='imageBackground' />");
+                this.imageBackgroundElement = div;
+                this.imageBackgroundElement.appendTo(this.element);
+            }
 
-            var imageUrl = objects.general.imageUrl;
+            let viewport = options.viewport;
+            div.css('height', viewport.height);
+
+            if (objects.imageScaling)
+                this.scalingType = objects.imageScaling.imageScalingType.toString();
+            else
+                this.scalingType = imageScalingType.normal;
+
+            let imageUrl = objects.general.imageUrl;
             if (Utility.isValidImageDataUrl(imageUrl))
                 div.css("backgroundImage", "url(" + imageUrl + ")");
 
-            div.appendTo(this.element);
-        }
-
-        public onResizing(viewport: IViewport): void {
+            if (this.scalingType === imageScalingType.fit)
+                div.css("background-size", "100% 100%");
+            else if (this.scalingType === imageScalingType.fill)
+                div.css("background-size", "cover");
+            else
+                div.css("background-size", "contain");
         }
     }
 } 

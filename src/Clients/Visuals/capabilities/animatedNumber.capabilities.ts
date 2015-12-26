@@ -24,8 +24,10 @@
  *  THE SOFTWARE.
  */
 
+/// <reference path="../_references.ts"/>
+
 module powerbi.visuals {
-    export var animatedTextObjectDescs: data.DataViewObjectDescriptors = {
+    export const animatedTextObjectDescs: data.DataViewObjectDescriptors = {
         general: {
             properties: {
                 formatString: {
@@ -35,10 +37,11 @@ module powerbi.visuals {
         }
     };
 
-    export var animatedNumberCapabilities: VisualCapabilities = {
+    export const animatedNumberCapabilities: VisualCapabilities = {
         objects: animatedTextObjectDescs,
         dataViewMappings: [{
             single: { role: "Values" }
         }],
+        supportsSelection: false,
     };
 }

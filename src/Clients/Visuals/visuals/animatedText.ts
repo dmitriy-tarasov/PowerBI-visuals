@@ -2,7 +2,7 @@
  *  Power BI Visualizations
  *
  *  Copyright (c) Microsoft Corporation
- *  All rights reserved. 
+ *  All rights reserved.
  *  MIT License
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -11,14 +11,14 @@
  *  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  *  copies of the Software, and to permit persons to whom the Software is
  *  furnished to do so, subject to the following conditions:
- *   
- *  The above copyright notice and this permission notice shall be included in 
+ *
+ *  The above copyright notice and this permission notice shall be included in
  *  all copies or substantial portions of the Software.
- *   
- *  THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
- *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
- *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
- *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+ *
+ *  THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
  *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  *  THE SOFTWARE.
@@ -31,19 +31,19 @@ module powerbi.visuals {
         align?: string;
         maxFontSize?: number;
     }
-    
+
     /**
      * Base class for values that are animated when resized.
      */
     export class AnimatedText {
-        
+
         /** Note: Public for testability */
         public static formatStringProp: DataViewObjectPropertyIdentifier = {
             objectName: 'general',
             propertyName: 'formatString',
         };
 
-        protected animator: IAnimator;
+        protected animator: IGenericAnimator;
 
         private name: string;
 
@@ -56,10 +56,7 @@ module powerbi.visuals {
         public visualConfiguration: AnimatedTextConfigurationSettings;
         public metaDataColumn: DataViewMetadataColumn;
 
-        private mainText: ClassAndSelector = {
-            class: 'mainText',
-            selector: '.mainText'
-        };
+        private mainText: jsCommon.CssConstants.ClassAndSelector = jsCommon.CssConstants.createClassAndSelector('mainText');
 
         public constructor(name: string) {
             this.name = name;
@@ -68,8 +65,8 @@ module powerbi.visuals {
 
         public getMetaDataColumn(dataView: DataView) {
             if (dataView && dataView.metadata && dataView.metadata.columns) {
-                for (var i = 0, ilen = dataView.metadata.columns.length; i < ilen; i++) {
-                    var column = dataView.metadata.columns[i];
+                for (let i = 0, ilen = dataView.metadata.columns.length; i < ilen; i++) {
+                    let column = dataView.metadata.columns[i];
                     if (column.isMeasure) {
                         this.metaDataColumn = column;
                         break;
@@ -84,9 +81,9 @@ module powerbi.visuals {
             seedFontHeight: number): number {
 
             // set up the node so we don't keep appending/removing it during the computation
-            var nodeSelection = this.svg.append('text').text(textToMeasure);
+            let nodeSelection = this.svg.append('text').text(textToMeasure);
 
-            var fontHeight = this.getAdjustedFontHeightCore(
+            let fontHeight = this.getAdjustedFontHeightCore(
                 nodeSelection,
                 availableWidth,
                 seedFontHeight,
@@ -108,7 +105,7 @@ module powerbi.visuals {
                 return seedFontHeight;
 
             nodeToMeasure.attr('font-size', seedFontHeight);
-            var candidateLength = TextMeasurementService.measureSvgTextElementWidth(nodeToMeasure[0][0]);
+            let candidateLength = TextMeasurementService.measureSvgTextElementWidth(nodeToMeasure[0][0]);
             if (candidateLength < availableWidth)
                 return seedFontHeight;
 
@@ -125,14 +122,15 @@ module powerbi.visuals {
             displayUnitSystemType: DisplayUnitSystemType,
             animationOptions: AnimationOptions,
             duration: number,
-            forceUpdate: boolean): void {
+            forceUpdate: boolean,
+            formatter?: IValueFormatter): void {
             if (!forceUpdate && startValue === endValue && endValue != null)
                 return;
 
             if (!startValue)
                 startValue = 0;
 
-            var svg = this.svg,
+            let svg = this.svg,
                 viewport = this.currentViewport,
                 height = viewport.height,
                 width = viewport.width,
@@ -140,7 +138,10 @@ module powerbi.visuals {
                 seedFontHeight = this.getSeedFontHeight(width, height),
                 translateX = this.getTranslateX(width),
                 translateY = this.getTranslateY(seedFontHeight),
-                metaDataColumn = this.metaDataColumn,
+                metaDataColumn = this.metaDataColumn;
+
+            // Respect the formatter default value
+            if (!formatter) {
                 formatter = valueFormatter.create({
                     format: this.getFormatString(metaDataColumn),
                     value: endValue,
@@ -148,13 +149,14 @@ module powerbi.visuals {
                     formatSingleValues: true,
                     allowFormatBeautification: true,
                     columnType: metaDataColumn ? metaDataColumn.type : undefined
-                }),
-                startText = formatter.format(startValue),
+                });
+            }
+            let startText = formatter.format(startValue),
                 endText = formatter.format(endValue);
 
             svg.attr('class', this.name);
 
-            var textElement = svg
+            let textElement = svg
                 .selectAll('text')
                 .data(endValueArr);
 
@@ -163,15 +165,18 @@ module powerbi.visuals {
                 .append('text')
                 .attr('class', this.mainText.class);
 
-            var fontHeight = this.getAdjustedFontHeight(width, endText, seedFontHeight);
-            translateY = this.getTranslateY(fontHeight + (height - fontHeight) / 2);  
+            let fontHeight = this.getAdjustedFontHeight(width, endText, seedFontHeight);
+            translateY = this.getTranslateY(fontHeight + (height - fontHeight) / 2);
 
-            var textElementUpdate = textElement
+            let textElementUpdate = textElement
                 .text(startText)
                 .attr({
                     'text-anchor': this.getTextAnchor(),
                     'font-size': fontHeight,
-                    'transform': SVGUtil.translate(translateX, translateY)
+                    'transform': SVGUtil.translate(translateX, translateY),
+                })
+                .style({
+                  'fill': this.style.titleText.color.value,
                 });
 
             if (endValue == null) {
@@ -179,16 +184,16 @@ module powerbi.visuals {
             }
             else if (metaDataColumn && AxisHelper.isDateTime(metaDataColumn.type)) {
                 textElementUpdate.text(endText);
-            }            
+            }
             else {
-                var interpolatedValue = startValue;
+                let interpolatedValue = startValue;
                 textElementUpdate
                     .transition()
                     .duration(duration)
                     .tween('text', function (d) {
-                        var i = d3.interpolate(interpolatedValue, d);
+                        let i = d3.interpolate(interpolatedValue, d);
                         return function (t) {
-                            var num = i(t);
+                            let num = i(t);
                             this.textContent = formatter.format(num);
                         };
                     });
@@ -197,10 +202,14 @@ module powerbi.visuals {
             SVGUtil.flushAllD3TransitionsIfNeeded(animationOptions);
         }
 
+        public setTextColor(color: string): void {
+            this.style.titleText.color.value = color;
+        }
+
         public getSeedFontHeight(boundingWidth: number, boundingHeight: number) {
             // Simply an estimate - it should eventually be modified based on the actual text length
-            var estimatedSize = Math.floor(Math.min(boundingWidth, boundingHeight) * 0.75);
-            var maxFontSize = this.visualConfiguration.maxFontSize;
+            let estimatedSize = Math.floor(Math.min(boundingWidth, boundingHeight) * 0.75);
+            let maxFontSize = this.visualConfiguration.maxFontSize;
 
             if (maxFontSize)
                 return Math.min(maxFontSize, estimatedSize);

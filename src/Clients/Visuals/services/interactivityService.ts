@@ -28,85 +28,197 @@
 
 module powerbi.visuals {
     import ArrayExtensions = jsCommon.ArrayExtensions;
-    import SemanticFilter = powerbi.data.SemanticFilter;
-    
+
+    export interface SelectableDataPoint {
+        selected: boolean;
+        identity: SelectionId;
+    }
+
     /**
      * Factory method to create an IInteractivityService instance.
      */
     export function createInteractivityService(hostServices: IVisualHostServices): IInteractivityService {
-        return new WebInteractivityService(hostServices);
+        return new InteractivityService(hostServices);
     }
-    
+
     /**
      * Creates a clear an svg rect to catch clear clicks.
      */
     export function appendClearCatcher(selection: D3.Selection): D3.Selection {
-        return selection.append("rect").classed("clearCatcher", true).attr({ width: "100%", height: "100%" });
+        return selection
+            .append("rect")
+            .classed("clearCatcher", true)
+            .attr({ width: "100%", height: "100%" });
+    }
+
+    export function isCategoryColumnSelected(propertyId: DataViewObjectPropertyIdentifier, categories: DataViewCategoricalColumn, idx: number): boolean {
+        return categories.objects != null
+            && categories.objects[idx]
+            && DataViewObjects.getValue<boolean>(categories.objects[idx], propertyId);
     }
 
     export function dataHasSelection(data: SelectableDataPoint[]): boolean {
-        for (var i = 0, ilen = data.length; i < ilen; i++) {
+        for (let i = 0, ilen = data.length; i < ilen; i++) {
             if (data[i].selected)
                 return true;
         }
         return false;
     }
 
-    export interface IInteractiveVisual {
-        accept(visitor: InteractivityVisitor, options: any): void;
+    export interface IInteractiveBehavior {
+        bindEvents(behaviorOptions: any, selectionHandler: ISelectionHandler): void;
+        renderSelection(hasSelection: boolean): void;
     }
-    
+
     /**
-     * Responsible for managing interactivity between the hosting visual and its peers.
+     * An optional options bag for binding to the interactivityService
      */
-    export interface IInteractivityService extends InteractivityVisitor {
+    export interface InteractivityServiceOptions {
+        isLegend?: boolean;
+        isLabels?: boolean;
+        overrideSelectionFromData?: boolean;
+        hasSelectionOverride?: boolean;
+        slicerDefaultValueHandler?: SlicerDefaultValueHandler;
+    }
+
+    /**
+     * Responsible for managing interactivity between the hosting visual and its peers
+     */
+    export interface IInteractivityService {
+        /** Binds the visual to the interactivityService */
+        bind(dataPoints: SelectableDataPoint[], behavior: IInteractiveBehavior, behaviorOptions: any, iteractivityServiceOptions?: InteractivityServiceOptions);
+
         /** Clears the selection */
         clearSelection(): void;
-        apply(visual: IInteractiveVisual, options: any);
 
         /** Sets the selected state on the given data points. */
         applySelectionStateToData(dataPoints: SelectableDataPoint[]): boolean;
 
         /** Checks whether there is at least one item selected */
         hasSelection(): boolean;
+
+        /** Checks whether there is at least one item selected within the legend */
+        legendHasSelection(): boolean;
+
+        /** Checks whether the selection mode is inverted or normal */
+        isSelectionModeInverted(): boolean;
+
+        /** Sets whether the selection mode is inverted or normal */
+        setSelectionModeInverted(inverted: boolean): void;
+
+        setDefaultValueMode(useDefaultValue: boolean): void;
+
+        isDefaultValueEnabled(): boolean;
     }
 
-    export class WebInteractivityService implements IInteractivityService {
+    export interface ISelectionHandler {
+        /** Handles a selection event by selecting the given data point */
+        handleSelection(dataPoint: SelectableDataPoint, multiSelect: boolean): void;
+
+        /** Handles a selection clear, clearing all selection state */
+        handleClearSelection(): void;
+
+        /** Toggles the selection mode between normal and inverted; returns true if the new mode is inverted */
+        toggleSelectionModeInversion(): boolean;
+
+        /** Sends the selection state to the host */
+        persistSelectionFilter(filterPropertyIdentifier: DataViewObjectPropertyIdentifier): void;
+    }
+
+    export class InteractivityService implements IInteractivityService, ISelectionHandler {
         // References
         private hostService: IVisualHostServices;
-        private sendSelectionToVisual = () => { };
-        private sendSelectionToLegend = () => { };
-        private sendSelectionToSecondVisual = () => { };
+        private renderSelectionInVisual = _.noop;
+        private renderSelectionInLegend = _.noop;
+        private renderSelectionInLabels = _.noop;
 
         // Selection state
         private selectedIds: SelectionId[] = [];
+        private isInvertedSelectionMode: boolean = false;
+        private hasSelectionOverride: boolean;
         private behavior: any;
-        private secondBehavior: any;
+        private slicerDefaultValueHandler: SlicerDefaultValueHandler;
+
+        // undefined means no default value is set
+        // True: apply default value. False: apply AnyValue.
+        private useDefaultValue: boolean;
 
         public selectableDataPoints: SelectableDataPoint[];
         public selectableLegendDataPoints: SelectableDataPoint[];
-        public secondSelectableDataPoints: SelectableDataPoint[];
-
-        private hasColumnChart = false;
-        private mapPointerEventsDisabled = false;
-        private mapPointerTimeoutSet = false;
+        public selectableLabelsDataPoints: SelectableDataPoint[];
 
         constructor(hostServices: IVisualHostServices) {
             debug.assertValue(hostServices, 'hostServices');
 
             this.hostService = hostServices;
         }
-        
+
+        // IInteractivityService Implementation
+
+        /** Binds the vsiual to the interactivityService */
+        public bind(dataPoints: SelectableDataPoint[], behavior: IInteractiveBehavior, behaviorOptions: any, options?: InteractivityServiceOptions): void {
+            // Bind the data
+            if (options && options.overrideSelectionFromData) {
+                // Override selection state from data points if needed
+                this.takeSelectionStateFromDataPoints(dataPoints);
+            }
+            if (options){
+                if (options.isLegend) {
+                // Bind to legend data instead of normal data if isLegend
+                this.selectableLegendDataPoints = dataPoints;
+                this.renderSelectionInLegend = () => behavior.renderSelection(this.legendHasSelection());
+            }
+                else if (options.isLabels) {
+                    //Bind to label data instead of normal data if isLabels
+                    this.selectableLabelsDataPoints = dataPoints;
+                    this.renderSelectionInLabels = () => behavior.renderSelection(this.labelsHasSelection());
+                }
+            else {
+                this.selectableDataPoints = dataPoints;
+                this.renderSelectionInVisual = () => behavior.renderSelection(this.hasSelection());
+            }
+                if (options.hasSelectionOverride != null) {
+                this.hasSelectionOverride = options.hasSelectionOverride;
+            }
+                if (options.slicerDefaultValueHandler) {
+                this.slicerDefaultValueHandler = options.slicerDefaultValueHandler;
+            }
+            } 
+            else {
+                this.selectableDataPoints = dataPoints;
+                this.renderSelectionInVisual = () => behavior.renderSelection(this.hasSelection());
+            }
+
+            // Bind to the behavior
+            this.behavior = behavior;
+            behavior.bindEvents(behaviorOptions, this);
+            // Sync data points with current selection state
+            this.syncSelectionState();
+        }
+
         /**
          * Sets the selected state of all selectable data points to false and invokes the behavior's select command.
          */
         public clearSelection(): void {
-            this.clearSelectionInternal();
-            this.sendSelectionToVisual();
-            this.sendSelectionToLegend();
-            this.sendSelectionToSecondVisual();
+            // if default value is already applied, don't clear the default selection
+            if (this.slicerDefaultValueHandler && this.slicerDefaultValueHandler.getDefaultValue() && this.useDefaultValue)
+                return;
+
+            this.hasSelectionOverride = undefined;
+            ArrayExtensions.clear(this.selectedIds);
+            this.isInvertedSelectionMode = false;
+            this.applyToAllSelectableDataPoints((dataPoint: SelectableDataPoint) => dataPoint.selected = false);
+            this.renderAll();
         }
-        
+
+        public applySelectionStateToData(dataPoints: SelectableDataPoint[]): boolean {
+            for (let dataPoint of dataPoints) {
+                dataPoint.selected = InteractivityService.checkDatapointAgainstSelectedIds(dataPoint, this.selectedIds);
+            }
+
+            return this.hasSelection();
+        }
+
         /**
          * Checks whether there is at least one item selected.
          */
@@ -114,16 +226,74 @@ module powerbi.visuals {
             return this.selectedIds.length > 0;
         }
 
-        private legendHasSelection(): boolean {
-            return dataHasSelection(this.selectableLegendDataPoints);
+        public legendHasSelection(): boolean {
+            return this.selectableLegendDataPoints ? dataHasSelection(this.selectableLegendDataPoints) : false;
         }
-        
-        /**
-         * Marks a data point as selected and syncs selection with the host.
-         */
-        public select(d: SelectableDataPoint, multiselect?: boolean) {
-            if (multiselect === undefined)
-                multiselect = d3.event.ctrlKey;
+
+        public labelsHasSelection(): boolean {
+            return this.selectableLabelsDataPoints ? dataHasSelection(this.selectableLabelsDataPoints) : false;
+        }
+
+        public isSelectionModeInverted(): boolean {
+            return this.isInvertedSelectionMode;
+        }
+
+        public setSelectionModeInverted(inverted: boolean): void {
+            this.isInvertedSelectionMode = inverted;
+        }
+
+        // ISelectionHandler Implementation
+
+        public handleSelection(dataPoint: SelectableDataPoint, multiSelect: boolean): void {
+            this.useDefaultValue = false;
+            this.select(dataPoint, multiSelect);
+            this.sendSelectionToHost();
+            this.renderAll();
+        }
+
+        public handleClearSelection(): void {
+            this.useDefaultValue = true;
+            this.clearSelection();
+            this.sendSelectionToHost();
+        }
+
+        public toggleSelectionModeInversion(): boolean {
+            this.useDefaultValue = false;
+            this.isInvertedSelectionMode = !this.isInvertedSelectionMode;
+            ArrayExtensions.clear(this.selectedIds);
+            this.applyToAllSelectableDataPoints((dataPoint: SelectableDataPoint) => dataPoint.selected = false);
+            this.sendSelectionToHost();
+            this.isInvertedSelectionMode ? this.syncSelectionStateInverted() : this.syncSelectionState();
+            this.renderAll();
+            return this.isInvertedSelectionMode;
+        }
+
+        public persistSelectionFilter(filterPropertyIdentifier: DataViewObjectPropertyIdentifier): void {
+            this.hostService.persistProperties(this.createChangeForFilterProperty(filterPropertyIdentifier));
+        }
+
+        public setDefaultValueMode(useDefaultValue: boolean): void {
+            this.useDefaultValue = useDefaultValue;
+        }
+
+        public isDefaultValueEnabled(): boolean {
+            return this.useDefaultValue;
+        }
+
+        // Private utility methods
+
+        private renderAll(): void {
+            this.renderSelectionInVisual();
+            this.renderSelectionInLegend();
+            this.renderSelectionInLabels();
+        }
+
+        /** Marks a data point as selected and syncs selection with the host. */
+        private select(d: SelectableDataPoint, multiSelect: boolean): void {
+            // If we're in inverted mode, use the invertedSelect instead
+            if (this.isInvertedSelectionMode) {
+                return this.selectInverted(d, multiSelect);
+            }
 
             // For highlight data points we actually want to select the non-highlight data point
             if (d.identity.highlight) {
@@ -131,15 +301,15 @@ module powerbi.visuals {
                 debug.assertValue(d, 'Expected to find a non-highlight data point');
             }
 
-            var id = d.identity;
+            let id = d.identity;
 
             if (!id)
                 return;
 
-            var selected = !d.selected || (!multiselect && this.selectedIds.length > 1);
+            let selected = !d.selected || (!multiSelect && this.selectedIds.length > 1);
 
             // If we have a multiselect flag, we attempt a multiselect
-            if (multiselect) {
+            if (multiSelect) {
                 if (selected) {
                     d.selected = true;
                     this.selectedIds.push(id);
@@ -150,8 +320,8 @@ module powerbi.visuals {
                 }
             }
             // We do a single select if we didn't do a multiselect or if we find out that the multiselect is invalid.
-            if (!multiselect || !this.hostService.canSelect({ data: this.selectedIds.map((value: SelectionId) => value.getSelector()) })) {
-                this.clearSelectionInternal();
+            if (!multiSelect || !this.hostService.canSelect({ data: this.selectedIds.map((value: SelectionId) => value.getSelector()) })) {
+                this.clearSelection();
                 if (selected) {
                     d.selected = true;
                     this.selectedIds.push(id);
@@ -161,52 +331,83 @@ module powerbi.visuals {
             this.syncSelectionState();
         }
 
+        private selectInverted(d: SelectableDataPoint, multiSelect: boolean): void {
+            let wasSelected = d.selected;
+            let id = d.identity;
+            debug.assert(!!multiSelect, "inverted selections are only supported in multiselect mode");
+
+            // the current datapoint state has to be inverted
+            d.selected = !wasSelected;
+
+            if (wasSelected)
+                this.removeId(id);
+            else              
+                this.selectedIds.push(id);
+
+            this.syncSelectionStateInverted();
+        }
+
         private removeId(toRemove: SelectionId): void {
-            var selectedIds = this.selectedIds;
-            for (var i = selectedIds.length - 1; i > -1; i--) {
-                var currentId = selectedIds[i];
+            let selectedIds = this.selectedIds;
+            for (let i = selectedIds.length - 1; i > -1; i--) {
+                let currentId = selectedIds[i];
 
                 if (toRemove.includes(currentId))
                     selectedIds.splice(i, 1);
             }
         }
 
-        public static isSelected(propertyId: DataViewObjectPropertyIdentifier, categories: DataViewCategoricalColumn, idx: number): boolean {
-            return categories.objects != null
-                && categories.objects[idx]
-                && DataViewObjects.getValue<boolean>(categories.objects[idx], propertyId);
-        }
-
         /** Note: Public for UnitTesting */
-        public createPropertiesToHost(filterPropertyIdentifier: DataViewObjectPropertyIdentifier): VisualObjectInstance[] {
-            var properties: { [name: string]: SemanticFilter } = {};
+        public createChangeForFilterProperty(filterPropertyIdentifier: DataViewObjectPropertyIdentifier): VisualObjectInstancesToPersist {
+            let properties: { [propertyName: string]: DataViewPropertyValue } = {};
+            let selectors: data.Selector[] = [];
 
             if (this.selectedIds.length > 0) {
-                // Set the property if there is any selection
-                var filter = powerbi.data.Selector.filterFromSelector(this.selectedIds.map((value: SelectionId) => value.getSelector()), false);
-                properties[filterPropertyIdentifier.propertyName] = filter;
+                selectors = _.chain(this.selectedIds)
+                    .filter((value: SelectionId) => value.hasIdentity())
+                    .map((value: SelectionId) => value.getSelector())
+                    .value();
             }
 
-            return [<VisualObjectInstance> {
+            let instance = {
                 objectName: filterPropertyIdentifier.objectName,
                 selector: undefined,
                 properties: properties
-            }];
+            };
+
+            let filter = powerbi.data.Selector.filterFromSelector(selectors, this.isInvertedSelectionMode);
+
+            if (this.slicerDefaultValueHandler && this.slicerDefaultValueHandler.getDefaultValue()) {
+                // we explicitly check for true/false because undefine means no default value
+                if (this.useDefaultValue === true)
+                    filter = powerbi.data.SemanticFilter.getDefaultValueFilter(this.slicerDefaultValueHandler.getIdentityFields());
+                else if (_.isEmpty(selectors))
+                    filter = powerbi.data.SemanticFilter.getAnyValueFilter(this.slicerDefaultValueHandler.getIdentityFields());
+            }
+
+            if (filter == null) {
+                properties[filterPropertyIdentifier.propertyName] = {};
+                return <VisualObjectInstancesToPersist> {
+                    remove: [instance]
+                };
+            }
+            else {
+                properties[filterPropertyIdentifier.propertyName] = filter;
+                return <VisualObjectInstancesToPersist> {
+                    merge: [instance]
+                };
+            }
         }
 
-        private sendPersistPropertiesToHost(filterPropertyIdentifier: DataViewObjectPropertyIdentifier) {
-            this.hostService.persistProperties(this.createPropertiesToHost(filterPropertyIdentifier));
-        }
-
-        private sendSelectToHost() {
-            var host = this.hostService;
+        private sendSelectionToHost() {
+            let host = this.hostService;
             if (host.onSelect) {
-                var selectArgs: SelectEventArgs = {
+                let selectArgs: SelectEventArgs = {
                     data: this.selectedIds.filter((value: SelectionId) => value.hasIdentity()).map((value: SelectionId) => value.getSelector())
                 };
 
-                var data2: SelectorsByColumn[] = this.selectedIds.filter((value: SelectionId) => value.getSelectorsByColumn() && value.hasIdentity()).map((value: SelectionId) => value.getSelectorsByColumn());
-                
+                let data2: SelectorsByColumn[] = this.selectedIds.filter((value: SelectionId) => value.getSelectorsByColumn() && value.hasIdentity()).map((value: SelectionId) => value.getSelectorsByColumn());
+
                 if (data2 && data2.length > 0)
                     selectArgs.data2 = data2;
 
@@ -214,81 +415,18 @@ module powerbi.visuals {
             }
         }
 
-        private sendSelectionToHost(filterPropertyIdentifier?: DataViewObjectPropertyIdentifier) {
-            // First set the selection, then fire the change.  This way cross-affecting changes can be applied in the correct order.
-            if (filterPropertyIdentifier)
-                this.sendPersistPropertiesToHost(filterPropertyIdentifier);
-            this.sendSelectToHost();
-        }
+        private takeSelectionStateFromDataPoints(dataPoints: SelectableDataPoint[]): void {
+            debug.assertValue(dataPoints, "dataPoints");
 
-        private clearSelectionInternal() {
-            ArrayExtensions.clear(this.selectedIds);
+            let selectedIds: SelectionId[] = this.selectedIds;
 
-            var selectableDataPoints = this.selectableDataPoints;
-            var selectableLegendDataPoints = this.selectableLegendDataPoints;
-            var secondSelectableDataPoints = this.secondSelectableDataPoints;
+            // Replace the existing selectedIds rather than merging.
+            ArrayExtensions.clear(selectedIds);
 
-            if (selectableDataPoints) {
-                for (var i = selectableDataPoints.length - 1; i > -1; i--) {
-                    selectableDataPoints[i].selected = false;
-                }
+            for (let dataPoint of dataPoints) {
+                if (dataPoint.selected)
+                    selectedIds.push(dataPoint.identity);
             }
-
-            if (secondSelectableDataPoints) {
-                for (var i = secondSelectableDataPoints.length - 1; i > -1; i--) {
-                    secondSelectableDataPoints[i].selected = false;
-                }
-            }
-
-            if (selectableLegendDataPoints) {
-                for (var i = selectableLegendDataPoints.length - 1; i > -1; i--) {
-                    selectableLegendDataPoints[i].selected = false;
-                }
-            }
-        }
-
-        public applySelectionStateToData(dataPoints: SelectableDataPoint[]): boolean {
-            for (var i = 0, len = dataPoints.length; i < len; i++) {
-                var dataPoint = dataPoints[i];
-                dataPoint.selected = this.selectedIds.some((selectedId) => selectedId.includes(dataPoint.identity));
-            }
-            return this.hasSelection();
-        }
-
-        /**
-         * Initialize the selection state based on the selection from the source.
-         */
-        private initAndSyncSelectionState(filterPropertyId?: DataViewObjectPropertyIdentifier): void {
-            var selectableDataPoints = this.selectableDataPoints;
-            var selectableLegendDataPoints = this.selectableLegendDataPoints;
-            var secondSelectableDataPoints = this.secondSelectableDataPoints;
-            var selectedIds = this.selectedIds;
-
-            // If there are selectableDataPoints and the current state of the InteractivityService doesn't have anything selected, look for selectded values in the data
-            if (selectableDataPoints && selectedIds.length === 0) {
-                if (selectableDataPoints) {
-                    for (var i = 0, len = selectableDataPoints.length; i < len; i++) {
-                        if (selectableDataPoints[i].selected) {
-                            selectedIds.push(selectableDataPoints[i].identity);
-                        }
-                    }
-                }
-                if (secondSelectableDataPoints) {
-                    for (var i = 0, len = secondSelectableDataPoints.length; i < len; i++) {
-                        if (secondSelectableDataPoints[i].selected) {
-                            selectedIds.push(secondSelectableDataPoints[i].identity);
-                        }
-                    }
-                }
-                if (selectableLegendDataPoints) {
-                    for (var i = 0, len = selectableLegendDataPoints.length; i < len; i++) {
-                        if (selectableLegendDataPoints[i].selected) {
-                            selectedIds.push(selectableLegendDataPoints[i].identity);
-                        }
-                    }
-                }
-            }
-            this.syncSelectionState(filterPropertyId);
         }
 
         /**
@@ -301,671 +439,106 @@ module powerbi.visuals {
          * 
          * Ignores series for now, since we don't support series selection at the moment.
          */
-        private syncSelectionState(filterPropertyId?: DataViewObjectPropertyIdentifier): void {
-            var selectedIds = this.selectedIds;
-            var selectableDataPoints = this.selectableDataPoints;
-            var selectableLegendDataPoints = this.selectableLegendDataPoints;
-            var secondSelectableDataPoints = this.secondSelectableDataPoints;
-            var foundMatchingId = false; // Checked only against the visual's data points; it's possible to have stuff selected in the visual that's not in the legend, but not vice-verse
-
-            if (!selectableDataPoints)
-                return;
-
-            for (var i = 0, ilen = selectableDataPoints.length; i < ilen; i++) {
-                var dataPoint = selectableDataPoints[i];
-                if (selectedIds.some((value: SelectionId) => value.includes(dataPoint.identity))) {
-                    if (!dataPoint.selected) {
-                        dataPoint.selected = true;
-                    }
-                    foundMatchingId = true;
-                }
-                else if (dataPoint.selected) {
-                    dataPoint.selected = false;
-                }
+        private syncSelectionState(): void {
+            if (this.isInvertedSelectionMode) {
+                return this.syncSelectionStateInverted();
             }
 
-            if (secondSelectableDataPoints) {
-                for (var i = 0, ilen = secondSelectableDataPoints.length; i < ilen; i++) {
-                    var dataPoint = secondSelectableDataPoints[i];
-                    if (selectedIds.some((value: SelectionId) => value.includes(dataPoint.identity))) {
-                        if (!dataPoint.selected) {
-                            dataPoint.selected = true;
-                        }
-                        foundMatchingId = true;
-                    }
-                    else if (dataPoint.selected) {
-                        dataPoint.selected = false;
-                    }
-                }
+            let selectedIds = this.selectedIds;
+            let selectableDataPoints = this.selectableDataPoints;
+            let selectableLegendDataPoints = this.selectableLegendDataPoints;
+            let selectableLabelsDataPoints = this.selectableLabelsDataPoints;
+            let foundMatchingId = false; // Checked only against the visual's data points; it's possible to have stuff selected in the visual that's not in the legend, but not vice-verse
+
+            if (!selectableDataPoints && !selectableLegendDataPoints)
+                return;
+
+            if (selectableDataPoints) {
+                if (InteractivityService.updateSelectableDataPointsBySelectedIds(selectableDataPoints, selectedIds))
+                    foundMatchingId = true;
             }
 
             if (selectableLegendDataPoints) {
-                for (var i = 0, ilen = selectableLegendDataPoints.length; i < ilen; i++) {
-                    var legendDataPoint = selectableLegendDataPoints[i];
-                    if (selectedIds.some((value: SelectionId) => value.includes(legendDataPoint.identity))) {
-                        legendDataPoint.selected = true;
-                    }
-                    else if (legendDataPoint.selected) {
-                        legendDataPoint.selected = false;
-                    }
+                if (InteractivityService.updateSelectableDataPointsBySelectedIds(selectableLegendDataPoints, selectedIds))
+                    foundMatchingId = true;
+            }
+
+            if (selectableLabelsDataPoints) {
+                let labelsDataPoint: SelectableDataPoint;
+                for (let i = 0, ilen = selectableLabelsDataPoints.length; i < ilen; i++) {
+                    labelsDataPoint = selectableLabelsDataPoints[i];
+                    if (selectedIds.some((value: SelectionId) => value.includes(labelsDataPoint.identity)))
+                        labelsDataPoint.selected = true;
+                    else
+                        labelsDataPoint.selected = false;
                 }
             }
 
             if (!foundMatchingId && selectedIds.length > 0) {
-                this.clearSelectionInternal();
-                this.sendSelectionToHost(filterPropertyId);
-            }
-        }
-
-        public apply(visual: IInteractiveVisual, options: any) {
-            visual.accept(this, options);
-        }
-
-        public visitColumnChart(options: ColumnBehaviorOptions) {
-            var behavior: ColumnChartWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new ColumnChartWebBehavior();
-            }
-
-            this.selectableDataPoints = options.datapoints;
-            this.initAndSyncSelectionState();
-            var bars = options.bars;
-            var clearCatcher = options.clearCatcher;
-
-            bars.on('click', (d: SelectableDataPoint, i: number) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), options);
-                this.sendSelectionToHost();
-                if (this.sendSelectionToLegend)
-                    this.sendSelectionToLegend();
-                this.sendSelectionToSecondVisual();
-            });
-
-            clearCatcher.on('click', () => {
                 this.clearSelection();
                 this.sendSelectionToHost();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), options);
-            };
-
-            this.hasColumnChart = true;
+            }
         }
 
-        public visitLineChart(options: LineChartBehaviorOptions) {
-            if (this.hasColumnChart) {
-                this.visitLineChartCombo(options);
+        private syncSelectionStateInverted(): void {
+            let selectedIds = this.selectedIds;
+            let selectableDataPoints = this.selectableDataPoints;
+            if (!selectableDataPoints)
+                return;
+
+            if (selectedIds.length === 0) {
+                for (let dataPoint of selectableDataPoints) {
+                    dataPoint.selected = false;
+                }
             }
             else {
-                this.visitLineChartNoCombo(options);
+                for (var dataPoint of selectableDataPoints) {
+                    if (selectedIds.some((value: SelectionId) => value.includes(dataPoint.identity)))
+                        dataPoint.selected = true;
+                    else if (dataPoint.selected)
+                        dataPoint.selected = false;
+                }
             }
         }
 
-        private visitLineChartNoCombo(options: LineChartBehaviorOptions) {
-            var behavior: LineChartWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new LineChartWebBehavior();
+        private applyToAllSelectableDataPoints(action: (selectableDataPoint: SelectableDataPoint) => void) {
+            let selectableDataPoints = this.selectableDataPoints;
+            let selectableLegendDataPoints = this.selectableLegendDataPoints;
+            let selectableLabelsDataPoints = this.selectableLabelsDataPoints;
+            if (selectableDataPoints) {
+                for (let dataPoint of selectableDataPoints) {
+                    action(dataPoint);
+                }
             }
 
-            this.selectableDataPoints = options.dataPoints;
-            this.initAndSyncSelectionState();
-            var lines = options.lines;
-            var interactivityLines = options.interactivityLines;
-            var dots = options.dots;
-            var clearCatcher = options.clearCatcher;
-            var areas = options.areas;
+            if (selectableLegendDataPoints) {
+                for (let dataPoint of selectableLegendDataPoints) {
+                    action(dataPoint);
+                }
+            }
 
-            var clickHandler = (d: SelectableDataPoint, i: number) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), lines, dots, areas);
-                this.sendSelectionToHost();
-                this.sendSelectionToLegend();
-            };
-
-            interactivityLines.on('click', clickHandler);
-            dots.on('click', clickHandler);
-            if (areas)
-                areas.on('click', clickHandler);
-
-            clearCatcher.on('click', () => {
-                this.clearSelection();
-                behavior.select(false, lines, dots, areas);
-                this.sendSelectionToHost();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), lines, dots, areas);
-            };
+            if (selectableLabelsDataPoints) {
+                for (let dataPoint of selectableLabelsDataPoints) {
+                    action(dataPoint);
+                }
+            }
         }
 
-        private visitLineChartCombo(options: LineChartBehaviorOptions) {
-            var behavior: LineChartWebBehavior = this.secondBehavior;
-            if (!behavior) {
-                behavior = this.secondBehavior = new LineChartWebBehavior();
+        private static updateSelectableDataPointsBySelectedIds(selectableDataPoints: SelectableDataPoint[], selectedIds: SelectionId[]): boolean {
+            let foundMatchingId = false;
+
+            for (let datapoint of selectableDataPoints) {
+                datapoint.selected = InteractivityService.checkDatapointAgainstSelectedIds(datapoint, selectedIds);
+
+                if (datapoint.selected)
+                    foundMatchingId = true;
             }
 
-            this.secondSelectableDataPoints = options.dataPoints;
-            this.initAndSyncSelectionState();
-            var lines = options.lines;
-            var interactivityLines = options.interactivityLines;
-            var dots = options.dots;
-            var areas = options.areas;
-
-            var clickHandler = (d: SelectableDataPoint, i: number) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), lines, dots, areas);
-                this.sendSelectionToHost();
-                if (this.sendSelectionToLegend)
-                    this.sendSelectionToLegend();
-                if (this.sendSelectionToVisual)
-                    this.sendSelectionToVisual();
-            };
-
-            interactivityLines.on('click', clickHandler);
-            dots.on('click', clickHandler);
-            if (areas)
-                areas.on('click', clickHandler);
-
-            this.sendSelectionToSecondVisual = () => {
-                behavior.select(this.hasSelection(), lines, dots, areas);
-            };
+            return foundMatchingId;
         }
 
-        public visitDataDotChart(options: DataDotChartBehaviorOptions): void {
-            var behavior: DataDotChartWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new DataDotChartWebBehavior();
-            }
-
-            // TODO: share this logic with column chart?
-            this.selectableDataPoints = options.datapoints;
-            this.initAndSyncSelectionState();
-            var dots = options.dots;
-            var clearCatcher = options.clearCatcher;
-
-            dots.on('click', (d: SelectableDataPoint, i: number) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), dots);
-                this.sendSelectionToHost();
-            });
-
-            clearCatcher.on('click', () => {
-                this.clearSelection();
-                behavior.select(false, dots);
-                this.sendSelectionToHost();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), dots);
-            };
-        }
-
-        public visitDonutChart(options: DonutBehaviorOptions) {
-            var behavior: DonutChartWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new DonutChartWebBehavior(options);
-            }
-
-            this.selectableDataPoints = options.datapoints;
-            this.initAndSyncSelectionState();
-            var slices = options.slices;
-            var highlightSlices = options.highlightSlices;
-            var clearCatcher = options.clearCatcher;
-            var hasHighlights = options.hasHighlights;
-
-            var clickHandler = (d: DonutArcDescriptor) => {
-                this.select(d.data);
-                behavior.select(this.hasSelection(), slices, false, hasHighlights, d.data);
-                behavior.select(this.hasSelection(), highlightSlices, true, hasHighlights, d.data);
-                this.sendSelectionToHost();
-                this.sendSelectionToLegend();
-            };
-
-            slices.on('click', clickHandler);
-            highlightSlices.on('click', clickHandler);
-
-            clearCatcher.on('click', () => {
-                this.clearSelection();
-                this.sendSelectionToHost();
-                this.sendSelectionToLegend();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), slices, false, hasHighlights);
-                behavior.select(this.hasSelection(), highlightSlices, true, hasHighlights);
-            };
-        }
-
-        public visitFunnel(options: FunnelBehaviorOptions) {
-            var behavior: FunnelWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new FunnelWebBehavior();
-            }
-
-            this.selectableDataPoints = options.datapoints;
-            this.initAndSyncSelectionState();
-            var bars = options.bars;
-            var labels = options.labels;
-            var clearCatcher = options.clearCatcher;
-            var hasHighlights = options.hasHighlights;
-
-            bars.on('click', (d: SelectableDataPoint, i: number) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), bars, hasHighlights);
-                this.sendSelectionToHost();
-            });
-
-            if (labels) {
-                labels.on('click', (d: SelectableDataPoint, i: number) => {
-                    this.select(d);
-                    behavior.select(this.hasSelection(), bars, hasHighlights);
-                    this.sendSelectionToHost();
-                });
-            }
-
-            clearCatcher.on('click', () => {
-                this.clearSelection();
-                this.sendSelectionToHost();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), bars, hasHighlights);
-            };
-        }
-
-        public visitScatterChart(options: ScatterBehaviorOptions) {
-            var behavior: ScatterChartWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new ScatterChartWebBehavior();
-            }
-
-            this.selectableDataPoints = options.data.dataPoints;
-            this.initAndSyncSelectionState();
-            var selection = options.dataPointsSelection;
-            var clearCatcher = options.clearCatcher;
-
-            selection.on('click', (d: SelectableDataPoint, i: number) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), selection);
-                this.sendSelectionToHost();
-                this.sendSelectionToLegend();
-            });
-
-            clearCatcher.on('click', () => {
-                this.clearSelection();
-                this.sendSelectionToHost();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), options.dataPointsSelection);
-            };
-        }
-
-        public visitTreemap(options: TreemapBehaviorOptions) {
-            var behavior: TreemapWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new TreemapWebBehavior();
-            }
-
-            this.selectableDataPoints = options.nodes;
-            this.initAndSyncSelectionState();
-            var shapes = options.shapes;
-            var highlightShapes = options.highlightShapes;
-            var labels = options.labels;
-            var hasHighlights = options.hasHighlights;
-
-            var clickHandler = (d: TreemapNode) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), shapes, false);
-                behavior.select(this.hasSelection(), highlightShapes, true);
-                this.sendSelectionToHost();
-                this.sendSelectionToLegend();
-            };
-
-            shapes.on('click', clickHandler);
-            highlightShapes.on('click', clickHandler);
-
-            labels.on('click', (d: SelectableDataPoint, i: number) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), shapes, hasHighlights);
-                this.sendSelectionToHost();
-                this.sendSelectionToLegend();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), shapes, hasHighlights);
-            };
-        }
-
-        public visitSlicer(options: SlicerBehaviorOptions) {
-            var behavior: SlicerWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new SlicerWebBehavior();
-            }
-
-            var filterPropertyId = slicerProps.filterPropertyIdentifier;
-            this.selectableDataPoints = options.datapoints;
-            this.initAndSyncSelectionState(filterPropertyId);
-            var slicers = options.slicerItemContainers;
-            var slicerItemLabels = options.slicerItemLabels;
-            var slicerItemInputs = options.slicerItemInputs;
-            var slicerClear = options.slicerClear;
-
-            slicers.on("mouseover", (d: SlicerDataPoint) => {
-                d.mouseOver = true;
-                d.mouseOut = false;
-                behavior.mouseInteractions(slicerItemLabels);
-            });
-
-            slicers.on("mouseout", (d: SlicerDataPoint) => {
-                d.mouseOver = false;
-                d.mouseOut = true;
-                behavior.mouseInteractions(slicerItemLabels);
-            });
-
-            slicerItemLabels.on("click", (d: SelectableDataPoint) => {
-                this.select(d, this.hasSelection());
-                behavior.select(slicerItemLabels);
-                this.sendSelectionToHost(filterPropertyId);
-            });
-
-            slicerClear.on("click", (d: SelectableDataPoint) => {
-                this.clearSelection();
-                behavior.clearSlicers(slicerItemLabels, slicerItemInputs);
-                this.sendSelectionToHost(filterPropertyId);
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(slicerItemLabels);
-            };
-
-            // Always update the Slicer as it's fully repainting
-            this.sendSelectionToVisual();
-        }
-
-        public visitWaterfallChart(options: WaterfallChartBehaviorOptions): void {
-            var behavior: WaterfallChartWebBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new WaterfallChartWebBehavior();
-            }
-
-            // TODO: share this logic with column chart?
-            this.selectableDataPoints = options.datapoints;
-            this.initAndSyncSelectionState();
-            var bars = options.bars;
-            var clearCatcher = options.clearCatcher;
-
-            bars.on('click', (d: SelectableDataPoint, i: number) => {
-                this.select(d);
-                behavior.select(this.hasSelection(), bars);
-                this.sendSelectionToHost();
-            });
-
-            clearCatcher.on('click', () => {
-                this.clearSelection();
-                this.sendSelectionToHost();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), bars);
-            };
-        }
-
-        public visitMap(options: MapBehaviorOptions): void {
-            var behavior: MapBehavior = this.behavior;
-            if (!behavior) {
-                behavior = this.behavior = new MapBehavior();
-            }
-
-            // TODO: share this logic with column chart?
-            this.selectableDataPoints = options.dataPoints;
-            this.initAndSyncSelectionState();
-            var bubbles = options.bubbles;
-            var slices = options.slices;
-            var shapes = options.shapes;
-            var clearCatcher = options.clearCatcher;
-
-            var clickHandler = (d: SelectableDataPoint, i: number) => {
-                if (bubbles)
-                    bubbles.style("pointer-events", "all");
-                if (shapes)
-                    shapes.style("pointer-events", "all");
-                this.select(d);
-                behavior.select(this.hasSelection(), bubbles, slices, shapes);
-                this.sendSelectionToHost();
-            };
-
-            if (!this.mapPointerEventsDisabled) {
-                if (bubbles)
-                    bubbles.style("pointer-events", "all");
-                if (slices)
-                    slices.style("pointer-events", "all");
-                if (shapes)
-                    shapes.style("pointer-events", "all");
-            }
-
-            if (bubbles) {
-                bubbles.on('click', clickHandler);
-                bubbles.on('mousewheel', () => {
-                    if (!this.mapPointerEventsDisabled)
-                        bubbles.style("pointer-events", "none");
-                    this.mapPointerEventsDisabled = true;
-                    if (!this.mapPointerTimeoutSet) {
-                        this.mapPointerTimeoutSet = true;
-                        setTimeout(() => {
-                            if (bubbles)
-                                bubbles.style("pointer-events", "all");
-                            this.mapPointerEventsDisabled = false;
-                            this.mapPointerTimeoutSet = false;
-                        }, 200);
-                    }
-                });
-            }
-
-            if (slices) {
-                slices.on('click', (d, i: number) => {
-                    slices.style("pointer-events", "all");
-                    this.mapPointerEventsDisabled = false;
-                    this.select(d.data);
-                    behavior.select(this.hasSelection(), bubbles, slices, shapes);
-                    this.sendSelectionToHost();
-                });
-                slices.on('mousewheel', () => {
-                    if (!this.mapPointerEventsDisabled)
-                        slices.style("pointer-events", "none");
-                    this.mapPointerEventsDisabled = true;
-                    if (!this.mapPointerTimeoutSet) {
-                        this.mapPointerTimeoutSet = true;
-                        setTimeout(() => {
-                            if (slices)
-                                slices.style("pointer-events", "all");
-                            this.mapPointerEventsDisabled = false;
-                            this.mapPointerTimeoutSet = false;
-                        }, 200);
-                    }
-                });
-            }
-
-            if (shapes) {
-                shapes.on('click', clickHandler);
-                shapes.on('mousewheel', () => {
-                    if (!this.mapPointerEventsDisabled) {
-                        shapes.style("pointer-events", "none");
-                    }
-                    this.mapPointerEventsDisabled = true;
-                    if (!this.mapPointerTimeoutSet) {
-                        this.mapPointerTimeoutSet = true;
-                        setTimeout(() => {
-                            if (shapes)
-                                shapes.style("pointer-events", "all");
-                            this.mapPointerEventsDisabled = false;
-                            this.mapPointerTimeoutSet = false;
-                        }, 200);
-                    }
-                });
-            }
-
-            clearCatcher.on('click', () => {
-                this.clearSelection();
-                this.sendSelectionToHost();
-            });
-
-            this.sendSelectionToVisual = () => {
-                behavior.select(this.hasSelection(), bubbles, slices, shapes);
-            };
-        }
-
-        public visitLegend(options: LegendBehaviorOptions): void {
-            var behavior: LegendWebBehavior = new LegendWebBehavior();
-
-            this.selectableLegendDataPoints = options.datapoints;
-            this.initAndSyncSelectionState();
-            var legendItems = options.legendItems;
-            var legendIcons = options.legendIcons;
-            var clearCatcher = options.clearCatcher;
-
-            legendItems.on('click', (d: LegendDataPoint) => {
-                this.select(d);
-                behavior.select(this.legendHasSelection(), legendIcons);
-                this.sendSelectionToVisual();
-                this.sendSelectionToSecondVisual();
-                this.sendSelectionToHost();
-            });
-
-            clearCatcher.on('click', () => {
-                clearLegendSelection(true);
-                this.sendSelectionToVisual();
-                this.sendSelectionToSecondVisual();
-            });
-
-            this.sendSelectionToLegend = () => {
-                behavior.select(this.legendHasSelection(), legendIcons);
-            };
-
-            this.sendSelectionToLegend();
-
-            var clearLegendSelection = (sendToHost: boolean) => {
-                this.clearSelection();
-                behavior.select(this.legendHasSelection(), legendIcons);
-                if (sendToHost)
-                    this.sendSelectionToHost();
-            };
+        private static checkDatapointAgainstSelectedIds(datapoint: SelectableDataPoint, selectedIds: SelectionId[]): boolean {
+            return selectedIds.some((value: SelectionId) => value.includes(datapoint.identity));
         }
     };
-    
-    /**
-     * A service for the mobile client to enable & route interactions.
-     */
-    export class MobileInteractivityService implements IInteractivityService {
-        private behavior;
-
-        public apply(visual: IInteractiveVisual, options: any) {
-            visual.accept(this, options);
-        }
-
-        private makeDataPointsSelectable(...selection: D3.Selection[]): MobileInteractivityService {
-            for (var i = 0, len = selection.length; i < len; i++) {
-                var sel = selection[i];
-
-                sel.on('click', (d: SelectableDataPoint, i: number) => {
-                    this.behavior.select(true, sel, d, i);
-                });
-            }
-
-            return this;
-        }
-
-        private makeRootSelectable(selection: D3.Selection): MobileInteractivityService {
-            selection.on('click', (d: SelectableDataPoint, i: number) => {
-                this.behavior.selectRoot();
-            });
-
-            return this;
-        }
-
-        private makeDragable(...selection: D3.Selection[]): MobileInteractivityService {
-            for (var i = 0, len = selection.length; i < len; i++) {
-                var sel = selection[i];
-
-                var drag = d3.behavior.drag()
-                    .on('drag', (d) => { this.behavior.drag(DragType.Drag); })
-                    .on('dragend', (d) => { this.behavior.drag(DragType.DragEnd); });
-
-                sel.call(drag);
-            }
-
-            return this;
-        }
-
-        public clearSelection(): void { }
-
-        public applySelectionStateToData(dataPoints: SelectableDataPoint[]): boolean { return false; }
-
-        public visitColumnChart(options: ColumnBehaviorOptions) {
-            // No mobile interactions declared.
-        }
-
-        public visitLineChart(options: LineChartBehaviorOptions) {
-            // Todo
-        }
-
-        public visitDataDotChart(options: DataDotChartBehaviorOptions): void {
-            // No mobile interactions declared.
-        }
-
-        public visitDonutChart(options: DonutBehaviorOptions) {
-            // No mobile interactions declared.
-        }
-
-        public visitFunnel(options: FunnelBehaviorOptions) {
-            // No mobile interactions declared.
-        }
-
-        public visitScatterChart(options: ScatterBehaviorOptions) {
-            var behavior: ScatterChartMobileBehavior = this.behavior;
-
-            if (options.data.dataPoints.length > 0) {
-                if (!behavior) {
-                    behavior = this.behavior = new ScatterChartMobileBehavior();
-                }
-
-                behavior.setOptions(options);
-
-                this.makeDataPointsSelectable(options.dataPointsSelection);
-                this.makeRootSelectable(options.root);
-                this.makeDragable(options.root);
-
-                behavior.selectRoot();
-            }
-        }
-
-        public visitTreemap(options: TreemapBehaviorOptions) {
-            // No mobile interactions declared.
-        }
-
-        public visitSlicer(options: SlicerBehaviorOptions) {
-            // No mobile interactions declared.
-        }
-
-        public visitWaterfallChart(options: WaterfallChartBehaviorOptions): void {
-            // No mobile interactions declared.
-        }
-
-        public visitMap(options: MapBehaviorOptions): void {
-            // No mobile interactions declared.
-        }
-
-        public visitLegend(options: LegendBehaviorOptions): void {
-            // No mobile interactions declared.
-        }
-        
-        /**
-         * Checks whether there is at least one item selected.
-         */
-        public hasSelection(): boolean {
-            // No mobile interactions declared.
-            return false;
-        }
-    }
 }

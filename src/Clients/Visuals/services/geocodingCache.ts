@@ -26,10 +26,7 @@
 
 /// <reference path="../_references.ts"/>
 
-module powerbi.visuals.BI.Services {
-    import GeocodeQuery = GeocodingManager.GeocodeQuery;
-    import IGeocodeCoordinate = GeocodingManager.IGeocodeCoordinate;
-
+module powerbi.visuals.services {
     interface IGeocodePair {
         query: GeocodeQuery;
         coordinate: IGeocodeCoordinate;
@@ -38,6 +35,7 @@ module powerbi.visuals.BI.Services {
     export interface IGeocodingCache {
         getCoordinates(query: GeocodeQuery): IGeocodeCoordinate;
         registerCoordinates(query: GeocodeQuery, coordinate: IGeocodeCoordinate): void;
+        registerCoordinates(query: GeocodeQuery, coordinate: IGeocodeBoundaryCoordinate): void;
     }
 
     export function createGeocodingCache(maxCacheSize: number, maxCacheSizeOverflow: number): IGeocodingCache {
@@ -60,7 +58,7 @@ module powerbi.visuals.BI.Services {
          */
         public getCoordinates(query: GeocodeQuery): IGeocodeCoordinate {
             // Check in-memory cache
-            var pair = this.geocodeCache[query.key];
+            let pair = this.geocodeCache[query.key];
             if (pair) {
                 pair.query.incrementCacheHit();
                 return pair.coordinate;
@@ -83,20 +81,22 @@ module powerbi.visuals.BI.Services {
         }
 
         private registerInMemory(query: GeocodeQuery, coordinate: IGeocodeCoordinate): void {
-            var geocodeCache = this.geocodeCache;
-            var keys = Object.keys(geocodeCache);
-            var cacheSize = keys.length;
-            var maxCacheSize = this.maxCacheSize;
+            let geocodeCache = this.geocodeCache;
+            let keys = Object.keys(geocodeCache);
+            let cacheSize = keys.length;
+            let maxCacheSize = this.maxCacheSize;
 
             if (keys.length > (maxCacheSize + this.maxCacheSizeOverflow)) {
 
-                var sortedKeys = keys.sort((a: string, b: string) => {
-                    var ca = geocodeCache[a].query.getCacheHits();
-                    var cb = geocodeCache[b].query.getCacheHits();
+                let sortedKeys = keys.sort((a: string, b: string) => {
+                    let cachedA = geocodeCache[a];
+                    let cachedB = geocodeCache[b];
+                    let ca = cachedA ? cachedA.query.getCacheHits() : 0;
+                    let cb = cachedB ? cachedB.query.getCacheHits() : 0;
                     return ca < cb ? -1 : (ca > cb ? 1 : 0);
                 });
 
-                for (var i = 0; i < (cacheSize - maxCacheSize); i++) {
+                for (let i = 0; i < (cacheSize - maxCacheSize); i++) {
                     geocodeCache[sortedKeys[i]] = undefined;
                 }
             }

@@ -48,17 +48,19 @@ module powerbi.visuals {
 
         import SQExprBuilder = powerbi.data.SQExprBuilder;
         import DataViewObjectPropertyDefinition = powerbi.data.DataViewObjectPropertyDefinition;
-        var DefaultMidColor: string = "#ffffff";
+        const DefaultMidColor: string = "#ffffff";
+        const DataPointPropertyIdentifier: string = "dataPoint";
+        const FillRulePropertyIdentifier: string = "fillRule";
 
         export function getFillRuleRole(objectDescs: powerbi.data.DataViewObjectDescriptors): string {
             if (!objectDescs)
                 return;
 
-            for (var objectName in objectDescs) {
-                var objectDesc = objectDescs[objectName];
-                for (var propertyName in objectDesc.properties) {
-                    var propertyDesc = objectDesc.properties[propertyName];
-                    if (propertyDesc.type && propertyDesc.type['fillRule']) {
+            for (let objectName in objectDescs) {
+                let objectDesc = objectDescs[objectName];
+                for (let propertyName in objectDesc.properties) {
+                    let propertyDesc = objectDesc.properties[propertyName];
+                    if (propertyDesc.type && propertyDesc.type[FillRulePropertyIdentifier]) {
                         return propertyDesc.rule.inputRole;
                     }
                 }
@@ -66,21 +68,21 @@ module powerbi.visuals {
         }
 
         export function shouldShowGradient(visualConfig): boolean {
-            var isShowGradienCard: boolean = visualConfig && visualConfig.query && visualConfig.query.projections && visualConfig.query.projections['Gradient'] ? true : false;
+            let isShowGradienCard: boolean = visualConfig && visualConfig.query && visualConfig.query.projections && visualConfig.query.projections['Gradient'] ? true : false;
             return isShowGradienCard;
         }
 
         export function getUpdatedGradientSettings(gradientObject: data.DataViewObjectDefinitions): GradientSettings {
-            var gradientSettings: GradientSettings;
+            let gradientSettings: GradientSettings;
 
             if (gradientObject && !$.isEmptyObject(gradientObject)) {
 
                 gradientSettings = getDefaultGradientSettings();
 
-                for (var propertyName in gradientSettings) {
-                    var hasProperty: boolean = (<Object>gradientObject).hasOwnProperty(propertyName);
+                for (let propertyName in gradientSettings) {
+                    let hasProperty: boolean = (<Object>gradientObject).hasOwnProperty(propertyName);
                     if (hasProperty) {
-                        var value: any = gradientObject[propertyName];
+                        let value: any = gradientObject[propertyName];
 
                         if (value && value.solid && value.solid.color) {
                             value = value.solid.color;
@@ -95,22 +97,22 @@ module powerbi.visuals {
         }
 
         export function getGradientMeasureIndex(dataViewCategorical: DataViewCategorical): number {
-            if (dataViewCategorical && dataViewCategorical.values) {
-                var grouped = dataViewCategorical.values.grouped();
+            if (dataViewCategorical && dataViewCategorical.values && dataViewCategorical.values.grouped) {
+                let grouped = dataViewCategorical.values.grouped();
                 return DataRoleHelper.getMeasureIndexOfRole(grouped, 'Gradient');
             }
             return -1;
         }
 
         export function hasGradientRole(dataViewCategorical: DataViewCategorical): boolean {
-            var gradientMeasureIndex = getGradientMeasureIndex(dataViewCategorical);
+            let gradientMeasureIndex = getGradientMeasureIndex(dataViewCategorical);
             return gradientMeasureIndex >= 0;
         }
 
         export function getDefaultGradientSettings(): GradientSettings {
 
-            var colors: GradientColors = getDefaultColors();
-            var gradientSettings: GradientSettings = {
+            let colors: GradientColors = getDefaultColors();
+            let gradientSettings: GradientSettings = {
                 diverging: false,
                 minColor: colors.minColor,
                 midColor: DefaultMidColor,
@@ -129,10 +131,10 @@ module powerbi.visuals {
 
         export function updateFillRule(propertyName: string, propertyValue: any, definitions: powerbi.data.DataViewObjectDefinitions): void {
 
-            var dataPointProperties: any = definitions["dataPoint"][0].properties;
-            var fillRule: any = dataPointProperties.fillRule;
-            var numericValueExpr: data.SQConstantExpr;
-            var colorValueExpr: data.SQExpr;
+            let dataPointObjectDefinition: data.DataViewObjectDefinition = data.DataViewObjectDefinitions.ensure(definitions, DataPointPropertyIdentifier, null);
+            let fillRule: FillRuleDefinition = getFillRule(definitions);
+            let numericValueExpr: data.SQConstantExpr;
+            let colorValueExpr: data.SQExpr;
 
             if (!fillRule) {
                 return;
@@ -171,11 +173,11 @@ module powerbi.visuals {
                 else {
                     fillRule = getLinearGradien2FillRuleDefinition(fillRule);
                 }
-                dataPointProperties.fillRule = fillRule;
+                dataPointObjectDefinition.properties[FillRulePropertyIdentifier] = fillRule;
             }
             else if (propertyName === "revertToDefault") {
                 fillRule = this.getDefaultFillRuleDefinition();
-                dataPointProperties.fillRule = fillRule;
+                dataPointObjectDefinition.properties[FillRulePropertyIdentifier] = fillRule;
             }
         }
 
@@ -189,22 +191,20 @@ module powerbi.visuals {
         }
 
         export function getFillRule(objectDefinitions: data.DataViewObjectDefinitions): FillRuleDefinition {
-            if (objectDefinitions && objectDefinitions["dataPoint"] && objectDefinitions["dataPoint"].length > 0 && objectDefinitions["dataPoint"][0].properties) {
-                return <FillRuleDefinition>objectDefinitions["dataPoint"][0].properties['fillRule'];
-            }
-            return null;
+            let fillRuleDefinition: FillRuleDefinition = data.DataViewObjectDefinitions.getValue(objectDefinitions, { objectName: DataPointPropertyIdentifier, propertyName: FillRulePropertyIdentifier }, null);
+            return fillRuleDefinition;
         }
 
         function getDefaultColors(): GradientColors {
 
-            var dataColors: IDataColorPalette = new powerbi.visuals.DataColorPalette();
-            var maxColorInfo: IColorInfo = dataColors.getColorByIndex(0);
-            var colors = d3.scale.linear()
+            let dataColors: IDataColorPalette = new powerbi.visuals.DataColorPalette();
+            let maxColorInfo: IColorInfo = dataColors.getColorByIndex(0);
+            let colors = d3.scale.linear()
                 .domain([0, 100])
                 .range(["#ffffff", maxColorInfo.value]);
-            var maxColor: string = maxColorInfo.value;
-            var minColor: string = <any>colors(20);
-            var midColor: string = DefaultMidColor;
+            let maxColor: string = maxColorInfo.value;
+            let minColor: string = <any>colors(20);
+            let midColor: string = DefaultMidColor;
 
             return {
                 minColor: minColor,
@@ -214,19 +214,19 @@ module powerbi.visuals {
         }
 
         export function getGradientSettingsFromRule(fillRule: FillRuleDefinition): GradientSettings {
-            var maxColor: string;
-            var minColor: string;
-            var midColor: string = DefaultMidColor;
-            var maxValue: number;
-            var midValue: number;
-            var minValue: number;
-            var diverging: boolean = fillRule.linearGradient3 !== undefined;
+            let maxColor: string;
+            let minColor: string;
+            let midColor: string = DefaultMidColor;
+            let maxValue: number;
+            let midValue: number;
+            let minValue: number;
+            let diverging: boolean = fillRule.linearGradient3 !== undefined;
 
             if (fillRule.linearGradient2) {
-                var maxColorExpr: any = fillRule.linearGradient2.max.color;
-                var minColorExpr: any = fillRule.linearGradient2.min.color;
-                var maxValueExpr: any = fillRule.linearGradient2.max.value;
-                var minValueExpr: any = fillRule.linearGradient2.min.value;
+                let maxColorExpr: any = fillRule.linearGradient2.max.color;
+                let minColorExpr: any = fillRule.linearGradient2.min.color;
+                let maxValueExpr: any = fillRule.linearGradient2.max.value;
+                let minValueExpr: any = fillRule.linearGradient2.min.value;
                 maxColor = maxColorExpr.value;
                 minColor = minColorExpr.value;
                 if (maxValueExpr) {
@@ -237,12 +237,12 @@ module powerbi.visuals {
                 }
             }
             else if (fillRule.linearGradient3) {
-                var maxColorExpr: any = fillRule.linearGradient3.max.color;
-                var midColorExpr: any = fillRule.linearGradient3.mid.color;
-                var minColorExpr: any = fillRule.linearGradient3.min.color;
-                var maxValueExpr: any = fillRule.linearGradient3.max.value;
-                var midValueExpr: any = fillRule.linearGradient3.mid.value;
-                var minValueExpr: any = fillRule.linearGradient3.min.value;
+                let maxColorExpr: any = fillRule.linearGradient3.max.color;
+                let midColorExpr: any = fillRule.linearGradient3.mid.color;
+                let minColorExpr: any = fillRule.linearGradient3.min.color;
+                let maxValueExpr: any = fillRule.linearGradient3.max.value;
+                let midValueExpr: any = fillRule.linearGradient3.mid.value;
+                let minValueExpr: any = fillRule.linearGradient3.min.value;
                 maxColor = maxColorExpr.value;
                 midColor = midColorExpr.value;
                 minColor = minColorExpr.value;
@@ -269,8 +269,8 @@ module powerbi.visuals {
         }
 
         function getLinearGradien2FillRuleDefinition(baseFillRule?: FillRuleDefinition): DataViewObjectPropertyDefinition {
-            var gradientSettings: GradientSettings = getGradientSettings(baseFillRule);
-            var fillRuleDefinition: FillRuleDefinition = {
+            let gradientSettings: GradientSettings = getGradientSettings(baseFillRule);
+            let fillRuleDefinition: FillRuleDefinition = {
                 linearGradient2: {
                     max: { color: SQExprBuilder.text(gradientSettings.maxColor) },
                     min: { color: SQExprBuilder.text(gradientSettings.minColor) },
@@ -281,8 +281,8 @@ module powerbi.visuals {
         }
 
         function getLinearGradien3FillRuleDefinition(baseFillRule?: FillRuleDefinition): DataViewObjectPropertyDefinition {
-            var gradientSettings: GradientSettings = getGradientSettings(baseFillRule);
-            var fillRuleDefinition: FillRuleDefinition = {
+            let gradientSettings: GradientSettings = getGradientSettings(baseFillRule);
+            let fillRuleDefinition: FillRuleDefinition = {
                 linearGradient3: {
                     max: { color: SQExprBuilder.text(gradientSettings.maxColor) },
                     mid: { color: SQExprBuilder.text(gradientSettings.midColor) },
@@ -294,8 +294,8 @@ module powerbi.visuals {
         }
 
         function getDefaultColorExpression(fillRule: FillRuleDefinition, propertyName: string): data.SQExpr {
-            var defaultColor: data.SQExpr;
-            var defaultFillRule: FillRuleDefinition;
+            let defaultColor: data.SQExpr;
+            let defaultFillRule: FillRuleDefinition;
 
             if (fillRule.linearGradient3) {
                 defaultFillRule = getLinearGradien3FillRuleDefinition();
@@ -323,7 +323,7 @@ module powerbi.visuals {
         }
 
         function getColorExpressionValue(fillRule: FillRuleDefinition, propertyName: string, propertyValue: string): data.SQExpr {
-            var colorExpressionValue: data.SQExpr;
+            let colorExpressionValue: data.SQExpr;
             if (propertyValue) {
                 colorExpressionValue = SQExprBuilder.text(propertyValue);
             }

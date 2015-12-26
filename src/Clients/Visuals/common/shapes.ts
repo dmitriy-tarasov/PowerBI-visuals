@@ -32,6 +32,249 @@ module powerbi.visuals {
     export module shapes {
         import Utility = jsCommon.Utility;
 
+        export interface IPolygon {
+            absoluteCentroid: IPoint;
+            polygonPoints: IPoint[];
+        }
+
+        export class Polygon {
+
+            private _absoluteCentroid: IPoint;
+            private _absoluteBoundingRect: Rect;
+            public polygonPoints: IPoint[];
+            public pixelBoundingRect: Rect;
+
+            constructor(absolutePoints: Float64Array) {
+                this.polygonPoints = this.convertArrayPathToPoints(absolutePoints);
+            }
+
+            public absoluteCentroid(): IPoint {
+                if (this._absoluteCentroid == null) {
+                    this._absoluteCentroid = this.calculatePolygonCentroid();
+                }
+                return this._absoluteCentroid;
+            }
+
+            public absoluteBoundingRect(): Rect {
+                if (this._absoluteBoundingRect == null) {
+                    this._absoluteBoundingRect = this.calculateBoundingRect();
+                }
+                return this._absoluteBoundingRect;
+            }          
+
+            /**
+             * Check if label text contain in polygon shape.
+             * 
+             * @return true/false is the label fit in polygon.
+             * measure if rects points are inside the polygon shape
+             * return true if there is at least 3 point inside the polygon
+             */
+            public contains(rect: IRect): boolean {
+                let topLeft: IPoint = { x: rect.left, y: rect.top };
+                let topRight: IPoint = { x: rect.left + rect.width, y: rect.top };
+                let bottomLeft: IPoint = { x: rect.left, y: rect.top + rect.height };
+                let bottomRight: IPoint = { x: rect.left + rect.width, y: rect.top + rect.height };
+
+                return (this.inside(topLeft)
+                    && this.inside(topRight)
+                    && this.inside(bottomLeft)
+                    && this.inside(bottomRight));
+            }
+
+            /**
+            * Check if label text is outside of polygon shape.
+            * It checks 8 points in the label. TopLeft, TopCenter, TopRight, MiddleLeft, MiddleRight, BottomLeft, BottomMiddle, BottomRight
+            * @return true/false is there is any conflict (at least one point inside the shape).
+            */
+            public conflicts(rect: IRect): boolean {
+                if (!this.isConflictWithBoundingBox(rect)) {
+                    return false;
+                }
+                let topLeft: IPoint = { x: rect.left, y: rect.top };
+                let topCenter: IPoint = { x: rect.left + rect.width/2, y: rect.top };
+                let topRight: IPoint = { x: rect.left + rect.width, y: rect.top };
+                let bottomLeft: IPoint = { x: rect.left, y: rect.top + rect.height };
+                let bottomCenter: IPoint = { x: rect.left + rect.width/2, y: rect.top + rect.height };
+                let bottomRight: IPoint = { x: rect.left + rect.width, y: rect.top + rect.height };
+                let middleLeft: IPoint = { x: rect.left, y: rect.top + rect.height / 2};
+                let middleRight: IPoint = { x: rect.left + rect.width, y: rect.top + rect.height/2 };
+
+                return (this.inside(topLeft)
+                    || this.inside(topCenter)
+                    || this.inside(topRight)
+                    || this.inside(bottomLeft)
+                    || this.inside(bottomCenter)
+                    || this.inside(bottomRight)
+                    || this.inside(middleLeft)
+                    || this.inside(middleRight));
+            }
+
+            /**
+            * returns intersection point of a line (depicted by two points) and a polygon.
+            * 
+            * @return the point of intersection or null if there is no intersection.
+            */
+            public lineIntersectionPoint(p0: IPoint, p1: IPoint): IPoint {
+                for (var i = 0; i < this.polygonPoints.length; i++) {
+                    let p2: IPoint = this.polygonPoints[i];
+                    let p3: IPoint = (i === this.polygonPoints.length - 1 ? this.polygonPoints[0] : this.polygonPoints[i + 1]);
+
+                    let intersection = this.getLineIntersection(p0, p1, p2, p3);
+
+                    if (intersection !== null) {
+                        return intersection;
+                    }
+                }
+
+                return null;
+            }
+
+            /**
+            * Check if label text is outside of polygon bounding box.
+            * 
+            * @return true/false is there is any conflict (at least one point inside the shape).
+            */
+            private isConflictWithBoundingBox(rect: IRect): boolean {
+                return Rect.isIntersecting(this.absoluteBoundingRect(), rect);
+            }
+
+            /**
+             * Calculate Polygon Centroid.
+             *
+             * @return 'center' point of the polygon.
+             * calculate the polygon area
+             * calculate the average points of the polygon by x & y axis. 
+             * divided the average point by the area
+             */
+            private calculatePolygonCentroid(): IPoint {
+                let area, tempPoint, cx, cy, i, j: number;
+                
+                /* First calculate the polygon's signed area A */
+                area = 0.0;
+                j = 1;
+                for (i = 0; i < this.polygonPoints.length; i++) {
+                    area += this.polygonPoints[i].x * this.polygonPoints[j].y - this.polygonPoints[j].x * this.polygonPoints[i].y;
+                    j = (j + 1) % this.polygonPoints.length;
+                }
+                area *= 0.5;
+
+                /* Now calculate the centroid coordinates Cx and Cy */
+                cx = cy = 0.0;
+                j = 1;
+                for (i = 0; i < this.polygonPoints.length; i++) {
+                    tempPoint = this.polygonPoints[i].x * this.polygonPoints[j].y - this.polygonPoints[j].x * this.polygonPoints[i].y;
+                    cx += (this.polygonPoints[i].x + this.polygonPoints[j].x) * tempPoint;
+                    cy += (this.polygonPoints[i].y + this.polygonPoints[j].y) * tempPoint;
+                    j = (j + 1) % this.polygonPoints.length;
+                }
+                cx = cx / (6.0 * area);
+                cy = cy / (6.0 * area);
+
+                return {
+                    x: cx,
+                    y: cy,
+                };
+            }
+
+            private calculateBoundingRect(): Rect {
+                let minX: number = Number.POSITIVE_INFINITY;
+                let minY: number = Number.POSITIVE_INFINITY;
+                let maxX: number = Number.NEGATIVE_INFINITY;
+                let maxY: number = Number.NEGATIVE_INFINITY;
+
+                for (let i = 0; i < this.polygonPoints.length; i++) {
+                    if (this.polygonPoints[i].x < minX) {
+                        minX = this.polygonPoints[i].x;
+                    } else if (this.polygonPoints[i].x > maxX) {
+                        maxX = this.polygonPoints[i].x;
+                    }
+
+                    if (this.polygonPoints[i].y < minY) {
+                        minY = this.polygonPoints[i].y;
+                    } else if (this.polygonPoints[i].y > maxY) {
+                        maxY = this.polygonPoints[i].y;
+                    }
+                }
+
+                return {
+                    left: minX,
+                    top: minY,
+                    width: maxX - minX,
+                    height: maxY - minY
+                };
+            }
+
+            /**
+             * Check if point exist inside polygon shape.
+             * 
+             * @return true/false if point exist inside shape.
+             * ray-casting algorithm based on:
+             * http://www.ecse.rpi.edu/Homepages/wrf/Research/Short_Notes/pnpoly.html
+             */
+            private inside(point: IPoint): boolean {
+                var x = point.x, y = point.y;
+
+                var insideVar: boolean = false;
+                for (var i = 0, j = this.polygonPoints.length - 1; i < this.polygonPoints.length; j = i++) {
+                    var xi = this.polygonPoints[i].x, yi = this.polygonPoints[i].y;
+                    var xj = this.polygonPoints[j].x, yj = this.polygonPoints[j].y;
+
+                    var intersect: boolean = ((yi > y) !== (yj > y))
+                        && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                    if (intersect) {
+                        insideVar = !insideVar;
+                    }
+                }
+                return insideVar;
+            };
+
+            /**
+             * Checks if a line (presented as two points) intersects with a another line
+             */
+            private getLineIntersection(line0p1: IPoint, line0p2: IPoint, line1p1: IPoint, line1p2: IPoint): IPoint {
+                let p0_x: number = line0p1.x;
+                let p0_y: number = line0p1.y;
+                let p1_x: number = line0p2.x;
+                let p1_y: number = line0p2.y;
+                let p2_x: number = line1p1.x;
+                let p2_y: number = line1p1.y;
+                let p3_x: number = line1p2.x;
+                let p3_y: number = line1p2.y;
+
+                let s1_x: number = p1_x - p0_x;
+                let s1_y: number = p1_y - p0_y;
+                let s2_x: number = p3_x - p2_x;
+                let s2_y: number = p3_y - p2_y;
+
+                //Calculating collisions using cross products
+                let s: number = (-s1_y * (p0_x - p2_x) + s1_x * (p0_y - p2_y)) / (-s2_x * s1_y + s1_x * s2_y);
+                let t: number = (s2_x * (p0_y - p2_y) - s2_y * (p0_x - p2_x)) / (-s2_x * s1_y + s1_x * s2_y);
+
+                // 0<=s<=1 and 0<=t<=1 ensures that the collision is part of the original line
+                if (s >= 0 && s <= 1 && t >= 0 && t <= 1) {
+                    // Collision detected
+                    return { x: (p0_x + (t * s1_x)), y: (p0_y + (t * s1_y)) };
+                }
+
+                return null; // No collision
+            }
+
+            private convertArrayPathToPoints(path: Float64Array): IPoint[] {
+                let pointsRes: IPoint[] = [];
+
+                for (var i = 0; i < path.length; i += 2) {
+                    let x = path[i];
+                    let y = path[i + 1];
+                    let newPoint = {
+                        x: x,
+                        y: y,
+                    };
+                    pointsRes.push(newPoint);
+                }
+                return pointsRes;
+            }
+        }
+        
         export interface IPoint {
             x: number;
             y: number;
@@ -40,8 +283,8 @@ module powerbi.visuals {
         export module Point {
 
             export function offset(point: IPoint, offsetX: number, offsetY: number): IPoint {
-                var newPointX = ((point.x + offsetX) >=0) ? (point.x + offsetX) : 0;
-                var newPointY = ((point.y + offsetY) >=0) ? (point.y + offsetY) : 0;
+                let newPointX = ((point.x + offsetX) >= 0) ? (point.x + offsetX) : 0;
+                let newPointY = ((point.y + offsetY) >= 0) ? (point.y + offsetY) : 0;
                 return { x: newPointX, y: newPointY };
             }
 
@@ -50,7 +293,7 @@ module powerbi.visuals {
             }
 
             export function clone(point: IPoint): IPoint {
-                return (point!==null)? { x: point.x, y: point.y }:null;
+                return (point !== null) ? { x: point.x, y: point.y } : null;
             }
 
             export function toString(point: IPoint): string {
@@ -65,8 +308,8 @@ module powerbi.visuals {
                 if ((point === null) || (other) === null) {
                     return null;
                 }
-                var diffX = other.x - point.x;
-                var diffY = other.y - point.y;
+                let diffX = other.x - point.x;
+                let diffY = other.y - point.y;
                 return Math.sqrt(diffX * diffX + diffY * diffY);
             }
 
@@ -84,12 +327,12 @@ module powerbi.visuals {
                       if (value.length === 2) {
                         return { x: Utility.parseNumber(value[0]), y: Utility.parseNumber(value[1]) };
                       } else if (typeof value === "string") {
-                          var parts = (<string>value).split(",");
+                          let parts = (<string>value).split(",");
                           if (parts.length !== 2) {
                               return (defaultValue === undefined) ? null : defaultValue;
                           }
                           return { x: Utility.parseNumber(parts[0]), y: Utility.parseNumber(parts[1]) };
-                      } else if ((value.length !== 2) && (typeof value !== "string")){
+                    } else if ((value.length !== 2) && (typeof value !== "string")) {
                           return (defaultValue === undefined) ? null : defaultValue;
                       }
                         else {
@@ -115,11 +358,11 @@ module powerbi.visuals {
             }
 
             export function clone(size: ISize): ISize {
-                return (size!==null)? { width: size.width, height: size.height }:null;
+                return (size !== null) ? { width: size.width, height: size.height } : null;
             }
 
             export function inflate(size: ISize, padding: IThickness): ISize {
-                var result = clone(size);
+                let result = clone(size);
                 if (padding) {
                     result.width += padding.left + padding.right;
                     result.height += padding.top + padding.bottom;
@@ -128,7 +371,7 @@ module powerbi.visuals {
             }
 
             export function deflate(size: ISize, padding: IThickness): ISize {
-                var result = clone(size);
+                let result = clone(size);
                 if (padding) {
                     result.width = result.width - padding.left - padding.right;
                     if (result.width < 0) {
@@ -177,7 +420,7 @@ module powerbi.visuals {
                     if (value.length === 2) {
                         return { width: Utility.parseNumber(value[0]), height: Utility.parseNumber(value[1]) };
                     } else if (typeof value === "string") {
-                        var parts = (<string>value).split(",");
+                        let parts = (<string>value).split(",");
                         if (parts.length !== 2) {
                             return (defaultValue === undefined) ? null : defaultValue;
                         }
@@ -192,13 +435,6 @@ module powerbi.visuals {
             }
         }
 
-        export interface IRect {
-            left: number;
-            top: number;
-            width: number;
-            height: number;
-        }
-
         export module Rect {
 
             export function getOffset(rect: IRect): IPoint {
@@ -209,7 +445,7 @@ module powerbi.visuals {
                 return { width: rect.width, height: rect.height };
             }
 
-            export function setSize(rect: IRect,value: ISize): void {
+            export function setSize(rect: IRect, value: ISize): void {
                 rect.width = value.width;
                 rect.height = value.height;
             }
@@ -223,28 +459,28 @@ module powerbi.visuals {
             }
 
             export function topLeft(rect: IRect): IPoint {
-                return {x:rect.left,y: rect.top};
+                return { x: rect.left, y: rect.top };
             }
 
             export function topRight(rect: IRect): IPoint {
-                return {x:rect.left + rect.width,y: rect.top};
+                return { x: rect.left + rect.width, y: rect.top };
             }
 
             export function bottomLeft(rect: IRect): IPoint {
-                return {x:rect.left,y: rect.top + rect.height};
+                return { x: rect.left, y: rect.top + rect.height };
             }
 
             export function bottomRight(rect: IRect): IPoint {
-                return {x:rect.left + rect.width,y: rect.top + rect.height};
+                return { x: rect.left + rect.width, y: rect.top + rect.height };
             }
 
-            export function equals(rect: IRect,other: IRect): boolean {
+            export function equals(rect: IRect, other: IRect): boolean {
                 return other !== undefined && other !== null &&
                     rect.left === other.left && rect.top === other.top && rect.width === other.width && rect.height === other.height;
             }
 
             export function clone(rect: IRect): IRect {
-                return (rect!==null)? {left:rect.left,top: rect.top,width: rect.width,height: rect.height}:null;
+                return (rect !== null) ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null;
             }
 
             export function toString(rect: IRect): string {
@@ -252,14 +488,14 @@ module powerbi.visuals {
             }
 
             export function offset(rect: IRect, offsetX: number, offsetY: number): IRect {
-                var newLeft = ((rect.left + offsetX) >= 0) ? rect.left + offsetX : 0;
-                var newTop = ((rect.top + offsetY) >= 0) ? rect.top + offsetY : 0;
+                let newLeft = ((rect.left + offsetX) >= 0) ? rect.left + offsetX : 0;
+                let newTop = ((rect.top + offsetY) >= 0) ? rect.top + offsetY : 0;
 
-                return { left: newLeft, top: newTop,width: rect.width,height: rect.height};
+                return { left: newLeft, top: newTop, width: rect.width, height: rect.height };
             }
 
             export function inflate(rect: IRect, padding: IThickness): IRect {
-                var result = clone(rect);
+                let result = clone(rect);
                 if (padding) {
                     result.left -= padding.left;
                     result.top -= padding.top;
@@ -270,7 +506,7 @@ module powerbi.visuals {
             }
 
             export function deflate(rect: IRect, padding: IThickness): IRect {
-                var result = clone(rect);
+                let result = clone(rect);
                 if (padding) {
                     result.left += padding.left;
                     result.top += padding.top;
@@ -280,12 +516,12 @@ module powerbi.visuals {
                 return result;
             }
 
-            export function inflateBy(rect: IRect,padding: number): IRect {
-                return {left:rect.left - padding, top: rect.top - padding,width: rect.width + padding + padding, height: rect.height + padding + padding};
+            export function inflateBy(rect: IRect, padding: number): IRect {
+                return { left: rect.left - padding, top: rect.top - padding, width: rect.width + padding + padding, height: rect.height + padding + padding };
             }
 
-            export function deflateBy(rect: IRect,padding: number): IRect {
-                return {left: rect.left + padding,top: rect.top + padding, width:rect.width - padding - padding, height:rect.height - padding - padding};
+            export function deflateBy(rect: IRect, padding: number): IRect {
+                return { left: rect.left + padding, top: rect.top + padding, width: rect.width - padding - padding, height: rect.height - padding - padding };
             }
             
             /**
@@ -322,20 +558,23 @@ module powerbi.visuals {
                 if ((rect === null) || (point === null)) {
                     return false;
                 }
-                return rect.left <= point.x && point.x <= rect.left + rect.width && rect.top <= point.y && point.y <= rect.top + rect.height;
+                return Double.lessOrEqualWithPrecision(rect.left, point.x) &&
+                    Double.lessOrEqualWithPrecision(point.x, rect.left + rect.width) &&
+                    Double.lessOrEqualWithPrecision(rect.top, point.y) &&
+                    Double.lessOrEqualWithPrecision(point.y, rect.top + rect.height);
             }
 
             export function isIntersecting(rect1: IRect, rect2: IRect): boolean {
                 if (!rect1 || !rect2) {
                     return false;
                 }
-                var left = Math.max(rect1.left, rect2.left);
-                var right = Math.min(rect1.left + rect1.width, rect2.left + rect2.width);
+                let left = Math.max(rect1.left, rect2.left);
+                let right = Math.min(rect1.left + rect1.width, rect2.left + rect2.width);
                 if (left > right) {
                     return false;
                 }
-                var top = Math.max(rect1.top, rect2.top);
-                var bottom = Math.min(rect1.top + rect1.height, rect2.top + rect2.height);
+                let top = Math.max(rect1.top, rect2.top);
+                let bottom = Math.min(rect1.top + rect1.height, rect2.top + rect2.height);
                 return top <= bottom;
             }
 
@@ -346,10 +585,10 @@ module powerbi.visuals {
                 if (!rect2) {
                     return rect1;
                 }
-                var left = Math.max(rect1.left, rect2.left);
-                var top = Math.max(rect1.top, rect2.top);
-                var right = Math.min(rect1.left + rect1.width, rect2.left + rect2.width);
-                var bottom = Math.min(rect1.top + rect1.height, rect2.top + rect2.height);
+                let left = Math.max(rect1.left, rect2.left);
+                let top = Math.max(rect1.top, rect2.top);
+                let right = Math.min(rect1.left + rect1.width, rect2.left + rect2.width);
+                let bottom = Math.min(rect1.top + rect1.height, rect2.top + rect2.height);
                 if (left <= right && top <= bottom) {
                     return { left: left, top: top, width: right - left, height: bottom - top };
                 } else {
@@ -364,10 +603,10 @@ module powerbi.visuals {
                 if (!rect2) {
                     return rect1;
                 }
-                var left = Math.min(rect1.left, rect2.left);
-                var top = Math.min(rect1.top, rect2.top);
-                var right = Math.max(rect1.left + rect1.width, rect2.left + rect2.width);
-                var bottom = Math.max(rect1.top + rect1.height, rect2.top + rect2.height);
+                let left = Math.min(rect1.left, rect2.left);
+                let top = Math.min(rect1.top, rect2.top);
+                let right = Math.max(rect1.left + rect1.width, rect2.left + rect2.width);
+                let bottom = Math.max(rect1.top + rect1.height, rect2.top + rect2.height);
 
                 return { left: left, top: top, width: right - left, height: bottom - top };
             }
@@ -379,20 +618,21 @@ module powerbi.visuals {
                     return (defaultValue === undefined) ? null : defaultValue;
                 } else {
                     if (value.length === 4) {
-                        return {left:Utility.parseNumber(value[0]), top: Utility.parseNumber(value[1]), width:Utility.parseNumber(value[2]), height:Utility.parseNumber(value[3])};
+                        return { left: Utility.parseNumber(value[0]), top: Utility.parseNumber(value[1]), width: Utility.parseNumber(value[2]), height: Utility.parseNumber(value[3]) };
                     } else if (typeof value === "string") {
-                        var parts = (<string>value).split(",");
+                        let parts = (<string>value).split(",");
                         if (parts.length !== 4) {
                             return (defaultValue === undefined) ? null : defaultValue;
                         }
                         return {
-                            left: Utility.parseNumber(parts[0]), top: Utility.parseNumber(parts[1]), width:Utility.parseNumber(parts[2]), height:Utility.parseNumber(parts[3])};
+                            left: Utility.parseNumber(parts[0]), top: Utility.parseNumber(parts[1]), width: Utility.parseNumber(parts[2]), height: Utility.parseNumber(parts[3])
+                        };
                     }
                     else if ((value.length !== 4) && (typeof value !== "string")) {
                         return (defaultValue === undefined) ? null : defaultValue;
                     }
-                    else{ 
-                        return {left:Utility.parseNumber(value.left), top:Utility.parseNumber(value.top), width:Utility.parseNumber(value.width), height:Utility.parseNumber(value.height)};
+                    else {
+                        return { left: Utility.parseNumber(value.left), top: Utility.parseNumber(value.top), width: Utility.parseNumber(value.width), height: Utility.parseNumber(value.height) };
                     }
                 }
             }
@@ -407,8 +647,8 @@ module powerbi.visuals {
 
         export module Thickness {
 
-            export function inflate(thickness: IThickness,other: IThickness): IThickness {
-                var result = clone(thickness);
+            export function inflate(thickness: IThickness, other: IThickness): IThickness {
+                let result = clone(thickness);
                 if (other) {
                     result.left = thickness.left + other.left;
                     result.right = thickness.right + other.right;
@@ -427,7 +667,7 @@ module powerbi.visuals {
             }
 
             export function clone(thickness: IThickness): IThickness {
-                return (thickness!==null)? {left:thickness.left, top:thickness.top, right:thickness.right, bottom:thickness.bottom}:null;
+                return (thickness !== null) ? { left: thickness.left, top: thickness.top, right: thickness.right, bottom: thickness.bottom } : null;
             }
 
             export function equals(thickness: IThickness, other: IThickness): boolean {
@@ -435,13 +675,13 @@ module powerbi.visuals {
             }
 
             export function flipHorizontal(thickness: IThickness): void {
-                var temp = thickness.right;
+                let temp = thickness.right;
                 thickness.right = thickness.left;
                 thickness.left = temp;
             }
 
             export function flipVertical(thickness: IThickness): void {
-                var top = thickness.top;
+                let top = thickness.top;
                 thickness.top = thickness.bottom;
                 thickness.bottom = top;
             }
@@ -479,7 +719,7 @@ module powerbi.visuals {
                     if (value.length === 4) {
                         return { left: Utility.parseNumber(value[0]), top: Utility.parseNumber(value[1]), right: Utility.parseNumber(value[2]), bottom: Utility.parseNumber(value[3]) };
                     } else if (typeof value === "string") {
-                        var parts = (<string>value).split(",");
+                        let parts = (<string>value).split(",");
                         if (parts.length !== 4) {
                             return (defaultValue === undefined) ? null : defaultValue;
                         }
@@ -510,7 +750,7 @@ module powerbi.visuals {
             }
 
             export function clone(vector: IVector): IVector {
-                return (vector!==null)? {x:vector.x, y:vector.y}:null;
+                return (vector !== null) ? { x: vector.x, y: vector.y } : null;
             }
 
             export function toString(vector: IVector): string {
@@ -526,15 +766,15 @@ module powerbi.visuals {
             }
 
             export function scale(vector: IVector, scalar: number): IVector {
-                return {x:vector.x * scalar, y: vector.y * scalar};
+                return { x: vector.x * scalar, y: vector.y * scalar };
             }
 
             export function normalize(vector: IVector): IVector {
-                return !isEmpty(vector)? scale(vector, 1 / getLength(vector)) : vector;
+                return !isEmpty(vector) ? scale(vector, 1 / getLength(vector)) : vector;
             }
 
             export function rotate90DegCW(vector: IVector): IVector {
-                return {x:vector.y, y: -vector.x};
+                return { x: vector.y, y: -vector.x };
             }
 
             export function rotate90DegCCW(vector: IVector): IVector {
@@ -542,12 +782,12 @@ module powerbi.visuals {
             }
 
             export function rotate(vector: IVector, angle: number): IVector {
-                var newX = vector.x * Math.cos(angle) - vector.y * Math.sin(angle);
-                var newY = vector.x * Math.sin(angle) + vector.y * Math.cos(angle);
-                return {x:newX, y:newY};
+                let newX = vector.x * Math.cos(angle) - vector.y * Math.sin(angle);
+                let newY = vector.x * Math.sin(angle) + vector.y * Math.cos(angle);
+                return { x: newX, y: newY };
             }
 
-            export function  equal(vector1: IVector, vector2: IVector): boolean {
+            export function equal(vector1: IVector, vector2: IVector): boolean {
                 return vector1 === vector2 ||
                     (vector1 !== undefined && vector2 !== undefined && vector1.x === vector2.x && vector1.y === vector2.y);
             }
@@ -561,28 +801,28 @@ module powerbi.visuals {
                 if (!vect1 || !vect2) {
                     return undefined;
                 }
-                return {x:vect1.x + vect2.x, y:vect1.y + vect2.y};
+                return { x: vect1.x + vect2.x, y: vect1.y + vect2.y };
             }
 
-            export function  subtract(vect1: IVector, vect2: IVector): IVector {
+            export function subtract(vect1: IVector, vect2: IVector): IVector {
                 if (!vect1 || !vect2) {
                     return undefined;
                 }
-                return {x:vect1.x - vect2.x, y:vect1.y - vect2.y};
+                return { x: vect1.x - vect2.x, y: vect1.y - vect2.y };
             }
 
-            export function  dotProduct(vect1: IVector, vect2: IVector): number {
+            export function dotProduct(vect1: IVector, vect2: IVector): number {
                 if (!vect1 || !vect2) {
                     return undefined;
                 }
                 return vect1.x * vect2.x + vect1.y * vect2.y;
             }
 
-            export function  getDeltaVector(p0: IPoint, p1: IPoint): IVector {
+            export function getDeltaVector(p0: IPoint, p1: IPoint): IVector {
                 if (!p0 || !p1) {
                     return undefined;
                 }
-                return {x:p1.x - p0.x, y:p1.y - p0.y};
+                return { x: p1.x - p0.x, y: p1.y - p0.y };
             }
         }
 

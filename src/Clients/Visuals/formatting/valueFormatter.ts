@@ -2,7 +2,7 @@
  *  Power BI Visualizations
  *
  *  Copyright (c) Microsoft Corporation
- *  All rights reserved. 
+ *  All rights reserved.
  *  MIT License
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -11,14 +11,14 @@
  *  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  *  copies of the Software, and to permit persons to whom the Software is
  *  furnished to do so, subject to the following conditions:
- *   
- *  The above copyright notice and this permission notice shall be included in 
+ *
+ *  The above copyright notice and this permission notice shall be included in
  *  all copies or substantial portions of the Software.
- *   
- *  THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
- *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
- *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
- *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+ *
+ *  THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
  *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  *  THE SOFTWARE.
@@ -27,15 +27,19 @@
 /// <reference path="../_references.ts"/>
 
 module powerbi.visuals {
-    
+
     /**
-     * Formats the value using provided format expression and culture
+     * Formats the value using provided format expression
      * @param value - value to be formatted and converted to string.
      * @param format - format to be applied if the number shouldn't be abbreviated.
      * If the number should be abbreviated this string is checked for special characters like $ or % if any
      */
     export interface ICustomValueFormatter {
         (value: any, format?: string): string;
+    }
+
+    export interface ICustomValueColumnFormatter {
+        (value: any, column: DataViewMetadataColumn, formatStringProp: DataViewObjectPropertyIdentifier): string;
     }
 
     export interface ValueFormatterOptions {
@@ -70,6 +74,7 @@ module powerbi.visuals {
     export interface IValueFormatter {
         format(value: any): string;
         displayUnit?: DisplayUnit;
+        options?: ValueFormatterOptions;
     }
 
     /** Captures all locale-specific options used by the valueFormatter. */
@@ -93,12 +98,12 @@ module powerbi.visuals {
 
     export module valueFormatter {
         import StringExtensions = jsCommon.StringExtensions;
-        var BeautifiedFormat: { [x: string]: string } = {
+        const BeautifiedFormat: { [x: string]: string } = {
             '0.00 %;-0.00 %;0.00 %': 'Percentage',
             '0.0 %;-0.0 %;0.0 %': 'Percentage1',
         };
 
-        var defaultLocalizedStrings = {
+        const defaultLocalizedStrings = {
             'NullValue': '(Blank)',
             'BooleanTrue': 'True',
             'BooleanFalse': 'False',
@@ -108,6 +113,8 @@ module powerbi.visuals {
             'RestatementComma': '{0}, {1}',
             'RestatementCompoundAnd': '{0} and {1}',
             'RestatementCompoundOr': '{0} or {1}',
+            'DisplayUnitSystem_EAuto_Title': 'Auto',
+            'DisplayUnitSystem_E0_Title': 'None',
             'DisplayUnitSystem_E3_LabelFormat': '{0}K',
             'DisplayUnitSystem_E3_Title': 'Thousands',
             'DisplayUnitSystem_E6_LabelFormat': '{0}M',
@@ -120,6 +127,10 @@ module powerbi.visuals {
             'Percentage1': '#,0.#%',
             'TableTotalLabel': 'Total',
             'Tooltip_HighlightedValueDisplayName': 'Highlighted',
+            'Funnel_PercentOfFirst': 'Percent of first',
+            'Funnel_PercentOfPrevious': 'Percent of previous',
+            'Funnel_PercentOfFirst_Highlight': 'Percent of first (highlight)',
+            'Funnel_PercentOfPrevious_Highlight': 'Percent of previous (highlight)',
             // Geotagging strings
             'GeotaggingString_Continent': 'continent',
             'GeotaggingString_Continents': 'continents',
@@ -159,15 +170,17 @@ module powerbi.visuals {
         };
 
         function beautify(format: string): string {
-            var key = BeautifiedFormat[format];
+            let key = BeautifiedFormat[format];
             if (key)
                 return defaultLocalizedStrings[key] || format;
             return format;
         }
 
         function describeUnit(exponent: number): DisplayUnitSystemNames {
-            var title: string = defaultLocalizedStrings["DisplayUnitSystem_E" + exponent + "_Title"];
-            var format: string = defaultLocalizedStrings["DisplayUnitSystem_E" + exponent + "_LabelFormat"];
+            let exponentLookup = (exponent === -1) ? 'Auto' : exponent.toString();
+
+            let title: string = defaultLocalizedStrings["DisplayUnitSystem_E" + exponentLookup + "_Title"];
+            let format: string = (exponent <= 0) ? '{0}' : defaultLocalizedStrings["DisplayUnitSystem_E" + exponentLookup + "_LabelFormat"];
 
             if (title || format)
                 return { title: title, format: format };
@@ -178,7 +191,7 @@ module powerbi.visuals {
         }
 
         // NOTE: Define default locale options, but these can be overriden by setLocaleOptions.
-        var locale: ValueFormatterLocalizationOptions = {
+        let locale: ValueFormatterLocalizationOptions = {
             null: defaultLocalizedStrings['NullValue'],
             true: defaultLocalizedStrings['BooleanTrue'],
             false: defaultLocalizedStrings['BooleanFalse'],
@@ -192,10 +205,15 @@ module powerbi.visuals {
             restatementCompoundOr: defaultLocalizedStrings['RestatementCompoundOr'],
         };
 
-        var MaxScaledDecimalPlaces = 2;
-        var MaxValueForDisplayUnitRounding = 1000;
-        var MinIntegerValueForDisplayUnits = 10000;
-        var MinPrecisionForDisplayUnits = 2;
+        const MaxScaledDecimalPlaces = 2;
+        const MaxValueForDisplayUnitRounding = 1000;
+        const MinIntegerValueForDisplayUnits = 10000;
+        const MinPrecisionForDisplayUnits = 2;
+
+        const DateTimeMetadataColumn: DataViewMetadataColumn = {
+            displayName: '',
+            type: ValueType.fromPrimitiveTypeAndCategory(PrimitiveType.DateTime),
+        };
 
         export function getFormatMetadata(format: string): powerbi.NumberFormat.NumericFormatMetadata {
             return powerbi.NumberFormat.getCustomFormatMetadata(format);
@@ -211,7 +229,7 @@ module powerbi.visuals {
         }
 
         export function createDefaultFormatter(formatString: string, allowFormatBeautification: boolean = false): IValueFormatter {
-            var formatBeaut: string = allowFormatBeautification ? locale.beautify(formatString) : formatString;
+            let formatBeaut: string = allowFormatBeautification ? locale.beautify(formatString) : formatString;
             return {
                 format: function (value: any): string {
                     if (value == null)
@@ -226,54 +244,54 @@ module powerbi.visuals {
         export function create(options: ValueFormatterOptions): IValueFormatter {
             debug.assertValue(options, 'options');
 
-            var format = !!options.allowFormatBeautification ? locale.beautify(options.format) : options.format;
+            let format = !!options.allowFormatBeautification ? locale.beautify(options.format) : options.format;
 
             if (shouldUseNumericDisplayUnits(options)) {
-                var displayUnitSystem = createDisplayUnitSystem(options.displayUnitSystemType);
+                let displayUnitSystem = createDisplayUnitSystem(options.displayUnitSystemType);
 
-                var singleValueFormattingMode = !!options.formatSingleValues;
+                let singleValueFormattingMode = !!options.formatSingleValues;
 
                 displayUnitSystem.update(Math.max(Math.abs(options.value || 0), Math.abs(options.value2 || 0)));
 
-                var forcePrecision = options.precision != null;
+                let forcePrecision = options.precision != null;
 
-                var decimals: number;
+                let decimals: number;
 
-                if (forcePrecision) {
+                if (forcePrecision)
                     decimals = -options.precision;
-                }
-                else if (displayUnitSystem.displayUnit)
+                else if (displayUnitSystem.displayUnit && displayUnitSystem.displayUnit.value > 1)
                     decimals = -MaxScaledDecimalPlaces;
 
                 return {
                     format: function (value: any): string {
-                        var formattedValue: string = getStringFormat(value, true /*nullsAreBlank*/);
-
+                        let formattedValue: string = getStringFormat(value, true /*nullsAreBlank*/);
                         if (!StringExtensions.isNullOrUndefinedOrWhiteSpaceString(formattedValue))
                             return formattedValue;
 
-                        if (value && !displayUnitSystem.displayUnit && Math.abs(value) < MaxValueForDisplayUnitRounding && !forcePrecision)
+                        if (value && !displayUnitSystem.isScalingUnit() && Math.abs(value) < MaxValueForDisplayUnitRounding && !forcePrecision)
                             value = Double.roundToPrecision(value, Double.pow10(Double.getPrecision(value)));
 
                         return singleValueFormattingMode ?
-                            displayUnitSystem.formatSingleValue(value, format, decimals) :
+                            displayUnitSystem.formatSingleValue(value, format, decimals, forcePrecision) :
                             displayUnitSystem.format(value, format, decimals, forcePrecision);
                     },
-                    displayUnit: displayUnitSystem.displayUnit
+                    displayUnit: displayUnitSystem.displayUnit,
+                    options: options
                 };
             }
 
             if (shouldUseDateUnits(options.value, options.value2, options.tickCount)) {
-                var unit = DateTimeSequence.getIntervalUnit(options.value /* minDate */, options.value2 /* maxDate */, options.tickCount);
+                let unit = DateTimeSequence.getIntervalUnit(options.value /* minDate */, options.value2 /* maxDate */, options.tickCount);
 
                 return {
                     format: function (value: any): string {
                         if (value == null)
                             return locale.null;
 
-                        var formatString = formattingService.dateFormatString(unit);
+                        let formatString = formattingService.dateFormatString(unit);
                         return formatCore(value, formatString);
-                    }
+                    },
+                    options: options
                 };
             }
 
@@ -289,7 +307,21 @@ module powerbi.visuals {
                 !!allowFormatBeautification ? locale.beautify(format) : format);
         }
 
-        export function formatRaw(value: any, format?: string): string {
+        function getValueFormat(value: any, columnType: ValueType): string {
+            // If column type not defined or is not datetime
+            // ...and the value is of time datetime,
+            // then use the default date format string
+            if ((!columnType || !columnType.dateTime) && value instanceof Date)
+                return getFormatString(DateTimeMetadataColumn, null, false);
+        }
+
+        export function formatValueColumn(value: any, column: DataViewMetadataColumn, formatStringProp: DataViewObjectPropertyIdentifier): string {
+            let format = getFormatString(column, formatStringProp);
+
+            let valueFormat = getValueFormat(value, column.type);
+            if (valueFormat)
+                format = valueFormat;
+
             return formatCore(value, format);
         }
 
@@ -304,6 +336,8 @@ module powerbi.visuals {
                     return new WholeUnitsDisplayUnitSystem(locale.describe);
                 case DisplayUnitSystemType.Verbose:
                     return new NoDisplayUnitSystem();
+                case DisplayUnitSystemType.DataLabels:
+                    return new DataLabelsDisplayUnitSystem(locale.describe);
                 default:
                     debug.assertFail('Unknown display unit system type');
                     return new DefaultDisplayUnitSystem(locale.describe);
@@ -311,18 +345,18 @@ module powerbi.visuals {
         }
 
         function shouldUseNumericDisplayUnits(options: ValueFormatterOptions): boolean {
-            var value = options.value;
-            var value2 = options.value2;
-            var format = options.format;
-            // For singleValue visuals like card, gauge we don't want to roundoff data to the nearest thousands so format the whole number / integers below 10K to not use display units 
+            let value = options.value;
+            let value2 = options.value2;
+            let format = options.format;
+            // For singleValue visuals like card, gauge we don't want to roundoff data to the nearest thousands so format the whole number / integers below 10K to not use display units
             if (options.formatSingleValues && format) {
 
                 if (Math.abs(value) < MinIntegerValueForDisplayUnits) {
 
-                    var isCustomFormat = !powerbi.NumberFormat.isStandardFormat(format);
+                    let isCustomFormat = !powerbi.NumberFormat.isStandardFormat(format);
 
                     if (isCustomFormat) {
-                        var precision = powerbi.NumberFormat.getCustomFormatMetadata(format, isCustomFormat).precision;
+                        let precision = powerbi.NumberFormat.getCustomFormatMetadata(format, true /*calculatePrecision*/).precision;
 
                         if (precision < MinPrecisionForDisplayUnits)
                             return false;
@@ -345,13 +379,13 @@ module powerbi.visuals {
         export function getFormatString(column: DataViewMetadataColumn, formatStringProperty: DataViewObjectPropertyIdentifier, suppressTypeFallback?: boolean): string {
             if (column) {
                 if (formatStringProperty) {
-                    var propertyValue = DataViewObjects.getValue<string>(column.objects, formatStringProperty);
+                    let propertyValue = DataViewObjects.getValue<string>(column.objects, formatStringProperty);
                     if (propertyValue)
                         return propertyValue;
                 }
 
                 if (!suppressTypeFallback) {
-                    var columnType = column.type;
+                    let columnType = column.type;
                     if (columnType) {
                         if (columnType.dateTime)
                             return 'd';
@@ -365,23 +399,23 @@ module powerbi.visuals {
         }
 
         function formatListCompound(strings: string[], conjunction: string): string {
-            var result: string;
+            let result: string;
 
             if (!strings) {
                 return null;
             }
 
-            var length = strings.length;
+            let length = strings.length;
             if (length > 0) {
                 result = strings[0];
-                var lastIndex = length - 1;
-                for (var i = 1, len = lastIndex; i < len; i++) {
-                    var value = strings[i];
+                let lastIndex = length - 1;
+                for (let i = 1, len = lastIndex; i < len; i++) {
+                    let value = strings[i];
                     result = StringExtensions.format(locale.restatementComma, result, value);
                 }
 
                 if (length > 1) {
-                    var value = strings[lastIndex];
+                    let value = strings[lastIndex];
                     result = StringExtensions.format(conjunction, result, value);
                 }
             }
@@ -390,7 +424,7 @@ module powerbi.visuals {
             }
 
             return result;
-        } 
+        }
 
         /** The returned string will look like 'A, B, ..., and C'  */
         export function formatListAnd(strings: string[]): string {
@@ -403,7 +437,7 @@ module powerbi.visuals {
         }
 
         function formatCore(value: any, format: string): string {
-            var formattedValue = getStringFormat(value, false /*nullsAreBlank*/);
+            let formattedValue = getStringFormat(value, false /*nullsAreBlank*/);
 
             if (!StringExtensions.isNullOrUndefinedOrWhiteSpaceString(formattedValue))
                 return formattedValue;
@@ -434,7 +468,7 @@ module powerbi.visuals {
         }
 
         export function getDisplayUnits(displayUnitSystemType: DisplayUnitSystemType): DisplayUnit[] {
-            var displayUnitSystem = createDisplayUnitSystem(displayUnitSystemType);
+            let displayUnitSystem = createDisplayUnitSystem(displayUnitSystemType);
             return displayUnitSystem.units;
         }
     }

@@ -37,10 +37,12 @@ module powerbi.data {
             this.selection = scopeIds;
         }
 
-        public evaluate(): any {
-            var currentScopeId = this.scopeId,
+        public evaluate(evalContext: IEvalContext): any {
+            debug.assertValue(evalContext, 'evalContext');
+
+            let currentScopeId = evalContext.getCurrentIdentity(),
                 selectedScopeIds = this.selection.scopeIds;
-            for (var i = 0, len = selectedScopeIds.length; i < len; i++) {
+            for (let i = 0, len = selectedScopeIds.length; i < len; i++) {
                 if (DataViewScopeIdentity.equals(currentScopeId, selectedScopeIds[i]))
                     return !this.selection.isNot;
             }

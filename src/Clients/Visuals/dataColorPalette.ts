@@ -68,7 +68,7 @@ module powerbi.visuals {
         }
 
         public getColorScaleByKey(key: string): IColorScale {
-            var scale = this.scales[key];
+            let scale = this.scales[key];
             if (scale === undefined) {
                 scale = this.createScale();
                 this.scales[key] = scale;
@@ -94,6 +94,10 @@ module powerbi.visuals {
             return this.basePickerColors;
         }
 
+        public getAllColors(): IColorInfo[] {
+            return this.colors;
+        }
+
         private createScale(): IColorScale {
             return D3ColorScale.createFromColors(this.colors);
         }
@@ -111,13 +115,17 @@ module powerbi.visuals {
         }
 
         public clearAndRotateScale(): void {
-            var offset = this.scale.domain().length;
-            var rotatedColors = ArrayExtensions.rotate(this.scale.range(), offset);
+            let offset = this.scale.domain().length;
+            let rotatedColors = ArrayExtensions.rotate(this.scale.range(), offset);
             this.scale = d3.scale.ordinal().range(rotatedColors);
         }
 
         public clone(): IColorScale {
             return new D3ColorScale(this.scale.copy());
+        }
+
+        public getDomain(): any[]{
+            return this.scale.domain();
         }
 
         public static createFromColors(colors: IColorInfo[]): D3ColorScale {
@@ -187,12 +195,12 @@ module powerbi.visuals {
             if (!ThemeManager.defaultTheme) {
                 // Extend the list of available colors by cycling the base colors
                 ThemeManager.defaultTheme = [];
-                var baseColors = ThemeManager.defaultBaseColors;
-                for (var i = 0; i < ThemeManager.colorSectorCount; ++i) {
-                    for (var j = 0, jlen = baseColors.length; j < jlen; ++j) {
+                let baseColors = ThemeManager.defaultBaseColors;
+                for (let i = 0; i < ThemeManager.colorSectorCount; ++i) {
+                    for (let j = 0, jlen = baseColors.length; j < jlen; ++j) {
                         ThemeManager.defaultTheme.push(
                             {
-                                value: jsCommon.color.rotate(baseColors[j].value, i / ThemeManager.colorSectorCount)
+                                value: jsCommon.Color.rotate(baseColors[j].value, i / ThemeManager.colorSectorCount)
                             });
                     }
                 }

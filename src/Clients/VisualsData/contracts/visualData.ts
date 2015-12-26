@@ -28,6 +28,11 @@
 
 module powerbi {
 
+    export interface IViewport {
+        height: number;
+        width: number;
+    }
+
     export interface VisualElement {
         DataRoles?: DataRole[];
         Settings?: VisualElementSettings;
@@ -41,6 +46,7 @@ module powerbi {
     export interface DataRole {
         Name: string;
         Projection: number;
+        isActive?: boolean;
     }
 
     /** The system used to determine display units used during formatting */
@@ -56,6 +62,9 @@ module powerbi {
          * Suitable for dashboard tile cards
          */
         WholeUnits,
+
+        /**A display unit system that also contains Auto and None units for data labels*/
+        DataLabels,
     }
 }
 

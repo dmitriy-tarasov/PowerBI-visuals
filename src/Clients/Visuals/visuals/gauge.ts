@@ -27,12 +27,18 @@
 /// <reference path="../_references.ts"/>
 
 module powerbi.visuals {
+    import ClassAndSelector = jsCommon.CssConstants.ClassAndSelector;
+    import createClassAndSelector = jsCommon.CssConstants.createClassAndSelector;
+    import PixelConverter = jsCommon.PixelConverter;
+
     export interface GaugeData extends TooltipEnabledDataPoint {
         percent: number;
         adjustedTotal: number;
         total: number;
         metadataColumn: DataViewMetadataColumn;
         targetSettings: GaugeTargetSettings;
+        dataLabelsSettings: VisualDataLabelsSettings;
+        calloutValueLabelsSettings: VisualDataLabelsSettings;
     }
 
     interface KpiArcAttributes {
@@ -68,6 +74,7 @@ module powerbi.visuals {
         labels: {
             count: number;
             padding: number;
+            fontSize: number;
         };
         kpiBands: {
             show: boolean;
@@ -102,7 +109,18 @@ module powerbi.visuals {
 
     export interface GaugeConstructorOptions {
         gaugeSmallViewPortProperties?: GaugeSmallViewPortProperties;
-        animator?: IAnimator;
+        animator?: IGenericAnimator;
+        tooltipsEnabled?: boolean;
+    }
+
+    export interface GaugeDataViewObjects extends DataViewObjects {
+        axis: GaugeDataViewObject;
+    }
+
+    export interface GaugeDataViewObject extends DataViewObject {
+        min?: number;
+        max?: number;
+        target?: number;
     }
 
     /** 
@@ -134,7 +152,8 @@ module powerbi.visuals {
             },
             labels: {
                 count: 2,
-                padding: 5
+                padding: 5,
+                fontSize: NewDataLabelUtils.DefaultLabelFontSizeInPt,
             },
             kpiBands: {
                 show: false,
@@ -150,22 +169,10 @@ module powerbi.visuals {
 
         private static InnerRadiusFactor = 0.7;
         private static KpiBandDistanceFromMainArc = 2;
-
-        private static MainGaugeGroupElementName = 'mainGroup';
-        private static LabelText: ClassAndSelector = {
-            class: 'labelText',
-            selector: '.labelText'
-        };
-
-        private static TargetConnector: ClassAndSelector = {
-            class: 'targetConnector',
-            selector: '.targetConnector'
-        };
-
-        private static TargetText: ClassAndSelector = {
-            class: 'targetText',
-            selector: '.targetText'
-        };
+        private static MainGaugeGroupClassName = 'mainGroup';
+        private static LabelText: ClassAndSelector = createClassAndSelector('labelText');
+        private static TargetConnector: ClassAndSelector = createClassAndSelector('targetConnector');
+        private static TargetText: ClassAndSelector = createClassAndSelector('targetText');
 
         /** Note: Public for testability */
         public static formatStringProp: DataViewObjectPropertyIdentifier = {
@@ -203,12 +210,14 @@ module powerbi.visuals {
         private gaugeSmallViewPortProperties: GaugeSmallViewPortProperties;
         private showTargetLabel: boolean;
 
+        private tooltipsEnabled: boolean; 
+
         private hostService: IVisualHostServices;
 
         // TODO: Remove this once all visuals have implemented update.
         private dataViews: DataView[];
 
-        public animator: IAnimator;
+        public animator: IGenericAnimator;
 
         constructor(options?: GaugeConstructorOptions) {
             if (options) {
@@ -216,8 +225,72 @@ module powerbi.visuals {
                     this.gaugeSmallViewPortProperties = options.gaugeSmallViewPortProperties;
                 }
                 this.animator = options.animator;
+                this.tooltipsEnabled = options.tooltipsEnabled;
             }
         }
+
+        public enumerateObjectInstances(options: EnumerateVisualObjectInstancesOptions): VisualObjectInstanceEnumeration {
+            let enumeration = new ObjectEnumerationBuilder();
+
+            switch (options.objectName) {
+                case 'axis':
+                    this.enumerateAxis(enumeration);
+                    break;
+                case 'labels': {
+                    let labelSettings = this.data ? this.data.dataLabelsSettings : dataLabelUtils.getDefaultGaugeLabelSettings();
+                    dataLabelUtils.enumerateDataLabels(this.getDataLabelSettingsOptions(enumeration, labelSettings));
+                    break;
+                }
+                case 'calloutValue': {
+                    let labelSettings = this.data ? this.data.calloutValueLabelsSettings : dataLabelUtils.getDefaultGaugeLabelSettings();
+                    dataLabelUtils.enumerateDataLabels(this.getDataLabelSettingsOptions(enumeration, labelSettings));
+                    break;
+                }
+            }
+            return enumeration.complete();
+        }
+
+        private getDataLabelSettingsOptions(enumeration: ObjectEnumerationBuilder, labelSettings: VisualDataLabelsSettings): VisualDataLabelsSettingsOptions {
+            return {
+                dataLabelsSettings: labelSettings,
+                show: true,
+                precision: true,
+                displayUnits: true,
+                fontSize: true,
+                enumeration: enumeration,
+            };
+        }
+
+        private enumerateAxis(enumeration: ObjectEnumerationBuilder): void {
+            let dataView: DataView = this.dataViews[0];
+
+            if (dataView && dataView.metadata) {
+                let properties: GaugeTargetSettings = Gauge.getGaugeObjectsProperties(dataView);
+                enumeration.pushInstance({
+                    selector: null,
+                    objectName: 'axis',
+                    properties: <any>properties,
+                });
+            }
+        }
+        
+        private static getGaugeObjectsProperties(dataView: DataView): GaugeTargetSettings {
+            let properties: any = {};
+            let objects: GaugeDataViewObjects = <GaugeDataViewObjects>dataView.metadata.objects;
+            let hasAxisObject: boolean = !!objects && !!objects.axis;
+
+            if (!DataRoleHelper.hasRoleInDataView(dataView, gaugeRoleNames.minValue))
+                properties.min = hasAxisObject ? objects.axis.min : undefined;
+
+            if (!DataRoleHelper.hasRoleInDataView(dataView, gaugeRoleNames.maxValue))
+                properties.max = hasAxisObject ? objects.axis.max : undefined;
+
+            if (!DataRoleHelper.hasRoleInDataView(dataView, gaugeRoleNames.targetValue))
+                properties.target = hasAxisObject ? objects.axis.target : undefined;
+
+            return properties;
+        }
+        
 
         public init(options: VisualInitOptions) {
             this.element = options.element;
@@ -234,20 +307,20 @@ module powerbi.visuals {
                     color => color.value));
 
             this.hostService = options.host;
-            var svg = this.svg = d3.select(this.element.get(0)).append('svg');
+            let svg = this.svg = d3.select(this.element.get(0)).append('svg');
             svg.classed(Gauge.VisualClassName, true);
-            var mainGraphicsContext = this.mainGraphicsContext = svg.append('g');
-            mainGraphicsContext.attr('class', Gauge.MainGaugeGroupElementName);
+            let mainGraphicsContext = this.mainGraphicsContext = svg.append('g');
+            mainGraphicsContext.attr('class', Gauge.MainGaugeGroupClassName);
 
             this.initKpiBands();
 
-            var backgroundArc = this.backgroundArc = d3.svg.arc()
+            let backgroundArc = this.backgroundArc = d3.svg.arc()
                 .innerRadius(0)
                 .outerRadius(0)
                 .startAngle(-Math.PI / 2)
                 .endAngle(Math.PI / 2);
 
-            var foregroundArc = this.foregroundArc = d3.svg.arc()
+            let foregroundArc = this.foregroundArc = d3.svg.arc()
                 .innerRadius(0)
                 .outerRadius(0)
                 .startAngle(-Math.PI / 2);
@@ -261,18 +334,18 @@ module powerbi.visuals {
                 .classed('foregroundArc', true)
                 .attr('d', foregroundArc);
 
-            var g = this.animatedNumberGrapicsContext = svg.append('g');
+            let g = this.animatedNumberGrapicsContext = svg.append('g');
 
             this.animatedNumber = new AnimatedNumber(g);
             this.animatedNumber.init(options);
 
-            var gaugeDrawingOptions = this.gaugeVisualProperties = this.getGaugeVisualProperties();
-            var animatedNumberProperties = this.getAnimatedNumberProperties(
+            let gaugeDrawingOptions = this.gaugeVisualProperties = this.getGaugeVisualProperties();
+            let animatedNumberProperties = this.getAnimatedNumberProperties(
                 gaugeDrawingOptions.radius,
                 gaugeDrawingOptions.innerRadiusFactor,
                 gaugeDrawingOptions.top,
                 gaugeDrawingOptions.left);
-            this.animatedNumber.svg.attr('transform', animatedNumberProperties.transformString);
+            this.animatedNumberGrapicsContext.attr('transform', animatedNumberProperties.transformString);
             this.animatedNumber.onResizing(animatedNumberProperties.viewport);
         }
 
@@ -280,7 +353,7 @@ module powerbi.visuals {
             debug.assertValue(options, 'options');
 
             this.currentViewport = options.viewport;
-            var dataViews = this.dataViews = options.dataViews;
+            let dataViews = this.dataViews = options.dataViews;
 
             if (!dataViews || !dataViews[0]) {
                 return;
@@ -296,37 +369,51 @@ module powerbi.visuals {
             //   1. There is a target
             //   2. The viewport width is big enough for a target
             //   3. We're showing label text for side numbers
-            this.showTargetLabel =
-            this.targetSettings.target != null &&
-            (this.currentViewport.width > Gauge.MinWidthForTargetLabel || !this.showMinMaxLabelsOnBottom()) &&
-            this.showSideNumbersLabelText();
+            //   4. Data label settings specify to show
+            this.showTargetLabel = this.targetSettings.target != null
+                && (this.currentViewport.width > Gauge.MinWidthForTargetLabel || !this.showMinMaxLabelsOnBottom())
+                && this.showSideNumbersLabelText()
+                && this.data.dataLabelsSettings.show;
 
             this.setMargins();
 
-            var gaugeDrawingOptions = this.gaugeVisualProperties = this.getGaugeVisualProperties();
-            var animatedNumberProperties = this.getAnimatedNumberProperties(
-                gaugeDrawingOptions.radius,
-                gaugeDrawingOptions.innerRadiusFactor,
-                gaugeDrawingOptions.top,
-                gaugeDrawingOptions.left);
-
+            this.gaugeVisualProperties = this.getGaugeVisualProperties();
             this.drawViewPort(this.gaugeVisualProperties);
             this.updateInternal(options.suppressAnimations);
-            this.animatedNumber.svg.attr('transform', animatedNumberProperties.transformString);
-            this.animatedNumber.update({
-                viewport: animatedNumberProperties.viewport,
-                dataViews: options.dataViews,
-                suppressAnimations: options.suppressAnimations,
-            });
+            this.updateCalloutValue(options.suppressAnimations);
 
-            var warnings = getInvalidValueWarnings(
+            let warnings = getInvalidValueWarnings(
                 dataViews,
                 false /*supportsNaN*/,
                 false /*supportsNegativeInfinity*/,
                 false /*supportsPositiveInfinity*/);
 
-            if (warnings && warnings.length > 0)
-                this.hostService.setWarnings(warnings);
+            this.hostService.setWarnings(warnings);
+        }
+
+        private updateCalloutValue(suppressAnimations: boolean): void {
+            if (this.data.calloutValueLabelsSettings.show) {
+                let animatedNumberProperties = this.getAnimatedNumberProperties(
+                    this.gaugeVisualProperties.radius,
+                    this.gaugeVisualProperties.innerRadiusFactor,
+                    this.gaugeVisualProperties.top,
+                    this.gaugeVisualProperties.left);
+                this.animatedNumberGrapicsContext.attr('transform', animatedNumberProperties.transformString);
+                this.animatedNumber.setTextColor(this.data.calloutValueLabelsSettings.labelColor);
+
+                let calloutValue: number = this.data ? this.data.total : null;
+                let formatter = this.getFormatter(this.data.calloutValueLabelsSettings, calloutValue);
+
+                this.animatedNumber.setFormatter(formatter);
+                this.animatedNumber.update({
+                    viewport: animatedNumberProperties.viewport,
+                    dataViews: this.dataViews,
+                    suppressAnimations: suppressAnimations,
+                });
+            }
+            else {
+                this.animatedNumber.clear();
+            }
         }
 
         public onDataChanged(options: VisualDataChangedOptions): void {
@@ -357,9 +444,9 @@ module powerbi.visuals {
         }
 
         private static getValidSettings(targetData: GaugeTargetData): GaugeTargetSettings {
-            var maxVal = (targetData.max === Gauge.MAX_VALUE) ? Gauge.DEFAULT_MAX : targetData.max;
-            var minVal = (targetData.min === Gauge.MIN_VALUE) ? Gauge.DEFAULT_MIN : targetData.min;
-            var targetVal = targetData.target;
+            let maxVal = (targetData.max === Gauge.MAX_VALUE) ? Gauge.DEFAULT_MAX : targetData.max;
+            let minVal = (targetData.min === Gauge.MIN_VALUE) ? Gauge.DEFAULT_MIN : targetData.min;
+            let targetVal = targetData.target;
 
             return {
                 min: minVal,
@@ -369,7 +456,7 @@ module powerbi.visuals {
         }
 
         private static getGaugeData(dataView: DataView): GaugeTargetData {
-            var settings: GaugeTargetData = {
+            let settings: GaugeTargetData = {
                 max: Gauge.MAX_VALUE,
                 min: Gauge.MIN_VALUE,
                 target: undefined,
@@ -378,13 +465,13 @@ module powerbi.visuals {
             };
 
             if (dataView && dataView.categorical && dataView.categorical.values && dataView.metadata && dataView.metadata.columns) {
-                var values = dataView.categorical.values;
-                var metadataColumns = dataView.metadata.columns;
+                let values = dataView.categorical.values;
+                let metadataColumns = dataView.metadata.columns;
 
                 debug.assert(metadataColumns.length >= values.length, 'length');
 
-                for (var i = 0; i < values.length; i++) {
-                    var col = metadataColumns[i],
+                for (let i = 0; i < values.length; i++) {
+                    let col = metadataColumns[i],
                         value = values[i].values[0] || 0;
                     if (col && col.roles) {
                         if (col.roles[gaugeRoleNames.y]) {
@@ -402,50 +489,68 @@ module powerbi.visuals {
                         }
                     }
                 }
+
+                // Override settings according to property pane axis values
+                let gaugeObjectsSettings: GaugeTargetSettings = Gauge.getGaugeObjectsProperties(dataView);
+                if (gaugeObjectsSettings && !$.isEmptyObject(gaugeObjectsSettings))
+                    Gauge.overrideGaugeSettings(settings, gaugeObjectsSettings);
             }
 
             return settings;
         }
+        
+        private static overrideGaugeSettings(settings: GaugeTargetData, gaugeObjectsSettings: GaugeTargetSettings) {
+            if ($.isNumeric(gaugeObjectsSettings.min))
+                settings.min = gaugeObjectsSettings.min;
 
+            if ($.isNumeric(gaugeObjectsSettings.max))
+                settings.max = gaugeObjectsSettings.max;
+
+            if ($.isNumeric(gaugeObjectsSettings.target))
+                settings.target = gaugeObjectsSettings.target;
+        }
+        
         /** Note: Made public for testability */
         public static converter(dataView: DataView): GaugeData {
-            var gaugeData = Gauge.getGaugeData(dataView);
-            var total = gaugeData.total;
-            if (total > 0 && gaugeData.max === Gauge.MAX_VALUE) {
-                var hasPercent = false;
-                var columns = dataView.metadata.columns;
-                if (!_.isEmpty(columns)) {
-                    var formatString = valueFormatter.getFormatString(dataView.metadata.columns[0], Gauge.formatStringProp, true);
-                    hasPercent = valueFormatter.getFormatMetadata(formatString).hasPercent;
-                }
+            let gaugeData = Gauge.getGaugeData(dataView),
+                total = gaugeData.total,
+                formatString: string = null,
+                hasPercent = false;
 
+            if (dataView.metadata && !_.isEmpty(dataView.metadata.columns)) {
+                formatString = valueFormatter.getFormatString(dataView.metadata.columns[0], Gauge.formatStringProp, true);
+                if (formatString != null)
+                    hasPercent = valueFormatter.getFormatMetadata(formatString).hasPercent;
+            }
+
+            if (total > 0 && gaugeData.max === Gauge.MAX_VALUE) {
                 gaugeData.max = hasPercent ? Gauge.DEFAULT_MAX : total * 2;
             }
 
-            var settings: GaugeTargetSettings = Gauge.getValidSettings(gaugeData);
+            let settings: GaugeTargetSettings = Gauge.getValidSettings(gaugeData);
 
             //Checking that the value is plotted inside the guage boundries
-            var adjustedTotal = Math.max(total, settings.min);
+            let adjustedTotal = Math.max(total, settings.min);
             adjustedTotal = Math.min(adjustedTotal, settings.max);
 
-            var percent: number = (settings.min !== settings.max)
+            let percent: number = (settings.min !== settings.max)
                 ? (adjustedTotal - settings.min) / (settings.max - settings.min)
                 : 0;
 
-            var tooltipInfo: TooltipDataItem[];
+            let tooltipInfo: TooltipDataItem[];
 
             if (dataView) {
                 if (gaugeData.tooltipItems.length > 0) {
-                    tooltipInfo = TooltipBuilder.createTooltipInfo(Gauge.formatStringProp, null, null, null, null, gaugeData.tooltipItems, null, null);
+                    tooltipInfo = TooltipBuilder.createTooltipInfo(Gauge.formatStringProp, null, null, null, null, gaugeData.tooltipItems);
                 }
                 else {
-                    var dataViewCat = dataView.categorical;
+                    let dataViewCat = dataView.categorical;
 
                     if (dataViewCat && dataViewCat.values && dataViewCat.values.length > 0) {
-                        var categoryValue: DataViewValueColumn = dataViewCat.values[0];
-                        var value = categoryValue.values[0];
+                        let categoryValue: DataViewValueColumn = dataViewCat.values[0];
+                        let value = categoryValue.values[0];
 
-                        tooltipInfo = TooltipBuilder.createTooltipInfo(Gauge.formatStringProp, null, null, dataViewCat.values, value, null, null, null);
+                        tooltipInfo = TooltipBuilder.createTooltipInfo(Gauge.formatStringProp, dataViewCat, null, value);
                     }
                 }
             }
@@ -457,13 +562,30 @@ module powerbi.visuals {
                 metadataColumn: Gauge.getMetaDataColumn(dataView),
                 targetSettings: settings,
                 tooltipInfo: tooltipInfo,
+                dataLabelsSettings: Gauge.convertDataLableSettings(dataView, "labels"),
+                calloutValueLabelsSettings: Gauge.convertDataLableSettings(dataView, "calloutValue"),
             };
+        }
+
+        private static convertDataLableSettings(dataview: DataView, objectName: string): VisualDataLabelsSettings {
+            let dataViewMetadata = dataview.metadata;
+            let dataLabelsSettings = dataLabelUtils.getDefaultGaugeLabelSettings();
+            if (dataViewMetadata) {
+                let objects: DataViewObjects = dataViewMetadata.objects;
+                if (objects) {
+                    // Handle lables settings
+                    let labelsObj = <DataLabelObject>objects[objectName];
+                    dataLabelUtils.updateLabelSettingsFromLabelsObject(labelsObj, dataLabelsSettings);
+                }
+            }
+
+            return dataLabelsSettings;
         }
 
         public static getMetaDataColumn(dataView: DataView) {
             if (dataView && dataView.metadata && dataView.metadata.columns) {
-                for (var i = 0, ilen = dataView.metadata.columns.length; i < ilen; i++) {
-                    var column = dataView.metadata.columns[i];
+                for (let i = 0, ilen = dataView.metadata.columns.length; i < ilen; i++) {
+                    let column = dataView.metadata.columns[i];
                     if (column.isMeasure) {
                         return column;
                     }
@@ -475,12 +597,12 @@ module powerbi.visuals {
         private initKpiBands() {
             if (!this.settings.kpiBands.show)
                 return;
-            var kpiArcs = this.kpiArcs = [];
-            var kpiArcPaths = this.kpiArcPaths = [];
-            var mainGraphicsContext = this.mainGraphicsContext;
+            let kpiArcs = this.kpiArcs = [];
+            let kpiArcPaths = this.kpiArcPaths = [];
+            let mainGraphicsContext = this.mainGraphicsContext;
 
-            for (var i = 0; i < 3; i++) {
-                var arc = d3.svg.arc()
+            for (let i = 0; i < 3; i++) {
+                let arc = d3.svg.arc()
                     .innerRadius(0)
                     .outerRadius(0)
                     .startAngle(0)
@@ -488,7 +610,7 @@ module powerbi.visuals {
 
                 kpiArcs.push(arc);
 
-                var arcPath = mainGraphicsContext.append('path')
+                let arcPath = mainGraphicsContext.append('path')
                     .attr("d", arc);
 
                 kpiArcPaths.push(arcPath);
@@ -499,7 +621,7 @@ module powerbi.visuals {
             if (!this.settings.kpiBands.show)
                 return;
 
-            for (var i = 0; i < kpiAngleAttr.length; i++) {
+            for (let i = 0; i < kpiAngleAttr.length; i++) {
                 this.kpiArcs[i]
                     .innerRadius(radius * innerRadiusFactor - (Gauge.KpiBandDistanceFromMainArc + this.settings.kpiBands.thickness))
                     .outerRadius(radius * innerRadiusFactor - Gauge.KpiBandDistanceFromMainArc)
@@ -522,20 +644,27 @@ module powerbi.visuals {
             }
         }
 
-        private updateTargetLine(radius: number, innerRadius: number, left, top) {
-            var targetSettings = this.targetSettings;
+        private getTargetRatio(): number {
+            let targetSettings = this.targetSettings;
+            let range = targetSettings.max - targetSettings.min;
+            if (range !== 0)
+                return (targetSettings.target - targetSettings.min) / range;
 
+            return 0;
+        }
+
+        private updateTargetLine(radius: number, innerRadius: number, left, top) {
             if (!this.targetLine) {
                 this.targetLine = this.mainGraphicsContext.append('line');
             }
 
-            var angle = (targetSettings.target - targetSettings.min) / (targetSettings.max - targetSettings.min) * Math.PI;
+            let angle = this.getTargetRatio() * Math.PI;
 
-            var outY = top - radius * Math.sin(angle);
-            var outX = left - radius * Math.cos(angle);
+            let outY = top - radius * Math.sin(angle);
+            let outX = left - radius * Math.cos(angle);
 
-            var inY = top - innerRadius * Math.sin(angle);
-            var inX = left - innerRadius * Math.cos(angle);
+            let inY = top - innerRadius * Math.sin(angle);
+            let inX = left - innerRadius * Math.cos(angle);
 
             this.targetLine.attr({
                 x1: inX,
@@ -549,21 +678,21 @@ module powerbi.visuals {
         public getAnimatedNumberProperties(radius: number,
             innerRadiusFactor: number,
             top: number, left: number): AnimatedNumberProperties {
-            var boxAngle = Math.PI / 4;
-            var scale = 1;
-            var innerRadiusOfArc = radius * innerRadiusFactor;
-            var innerRadiusForTextBoundingBox = innerRadiusOfArc - (this.settings.kpiBands.show
+            let boxAngle = Math.PI / 4;
+            let scale = 1;
+            let innerRadiusOfArc = radius * innerRadiusFactor;
+            let innerRadiusForTextBoundingBox = innerRadiusOfArc - (this.settings.kpiBands.show
                 ? (Gauge.KpiBandDistanceFromMainArc + this.settings.kpiBands.thickness)
                 : 0);
-            var innerRCos = innerRadiusForTextBoundingBox * Math.cos(boxAngle);
-            var innerRSin = innerRadiusForTextBoundingBox * Math.sin(boxAngle);
-            var innerY = top - innerRSin;
-            var innerX = left - innerRCos;
-            var innerY = innerY * scale;
-            var innerX = innerX * scale;
-            var animatedNumberWidth = innerRCos * 2;
+            let innerRCos = innerRadiusForTextBoundingBox * Math.cos(boxAngle);
+            let innerRSin = innerRadiusForTextBoundingBox * Math.sin(boxAngle);
+            let innerY = top - innerRSin;
+            let innerX = left - innerRCos;
+            innerY = innerY * scale;
+            innerX = innerX * scale;
+            let animatedNumberWidth = innerRCos * 2;
 
-            var properties: AnimatedNumberProperties = {
+            let properties: AnimatedNumberProperties = {
                 transformString: SVGUtil.translate(innerX, innerY),
                 viewport: { height: innerRSin, width: animatedNumberWidth }
             };
@@ -572,19 +701,19 @@ module powerbi.visuals {
 
         /** Note: public for testability */
         public getGaugeVisualProperties(): GaugeVisualProperties {
-            var viewport = this.currentViewport;
-            var margin: IMargin = this.margin;
-            var width = viewport.width - margin.right - margin.left;
-            var halfWidth = width / 2;
-            var height = viewport.height - margin.top - margin.bottom;
-            var radius = Math.min(halfWidth, height);
-            var innerRadiusFactor = Gauge.InnerRadiusFactor;
-            var left = margin.left + halfWidth;
-            var top = radius + (height - radius) / 2 + margin.top;
-            var tString = SVGUtil.translate(left, top);
-            var innerRadiusOfArc = radius * innerRadiusFactor;
+            let viewport = this.currentViewport;
+            let margin: IMargin = this.margin;
+            let width = viewport.width - margin.right - margin.left;
+            let halfWidth = width / 2;
+            let height = viewport.height - margin.top - margin.bottom;
+            let radius = Math.min(halfWidth, height);
+            let innerRadiusFactor = Gauge.InnerRadiusFactor;
+            let left = margin.left + halfWidth;
+            let top = radius + (height - radius) / 2 + margin.top;
+            let tString = SVGUtil.translate(left, top);
+            let innerRadiusOfArc = radius * innerRadiusFactor;
 
-            var gaugeData: GaugeVisualProperties = {
+            let gaugeData: GaugeVisualProperties = {
                 radius: radius,
                 innerRadiusOfArc: innerRadiusOfArc,
                 left: left,
@@ -603,13 +732,13 @@ module powerbi.visuals {
         public drawViewPort(drawOptions: GaugeVisualProperties): void {
             debug.assertAnyValue(drawOptions, "Gauge options");
 
-            var separation = this.settings.kpiBands.separationRadians;
-            var innerRadiusFactor = Gauge.InnerRadiusFactor;
+            let separation = this.settings.kpiBands.separationRadians;
+            let innerRadiusFactor = Gauge.InnerRadiusFactor;
 
-            var backgroudArc = this.backgroundArc;
-            var color = this.color;
+            let backgroudArc = this.backgroundArc;
+            let color = this.color;
 
-            var attrs: KpiArcAttributes[] = [{
+            let attrs: KpiArcAttributes[] = [{
                 fill: color(0),
                 start: -Math.PI / 2,
                 end: -Math.PI / 2 + Math.PI / 4 - separation
@@ -623,8 +752,8 @@ module powerbi.visuals {
                     end: Math.PI / 2
                 }];
 
-            var radius = drawOptions.radius;
-            var transformString = drawOptions.transformString;
+            let radius = drawOptions.radius;
+            let transformString = drawOptions.transformString;
             this.updateKpiBands(radius, innerRadiusFactor, transformString, attrs);
 
             backgroudArc
@@ -637,7 +766,7 @@ module powerbi.visuals {
                 .attr("d", backgroudArc)
                 .attr("transform", transformString);
 
-            var foregroundArc = this.foregroundArc;
+            let foregroundArc = this.foregroundArc;
 
             foregroundArc
                 .innerRadius(radius * innerRadiusFactor)
@@ -649,12 +778,13 @@ module powerbi.visuals {
                 .attr("transform", transformString)
                 .attr("d", foregroundArc);
 
-            var innerRadiusOfArc = drawOptions.innerRadiusOfArc;
-            var left = drawOptions.left;
-            var top = drawOptions.top;
-            var margin = drawOptions.margin;
-            var height = drawOptions.height;
-            var targetSettings = this.targetSettings;
+            let innerRadiusOfArc = drawOptions.innerRadiusOfArc;
+            let left = drawOptions.left;
+            let top = drawOptions.top;
+            let margin = drawOptions.margin;
+            let height = drawOptions.height;
+            let targetSettings = this.targetSettings;
+
             if (!this.settings.targetLine.show || targetSettings.target == null) {
                 this.removeTargetElements();
             } else {
@@ -668,25 +798,16 @@ module powerbi.visuals {
             this.svg.attr('height', this.currentViewport.height).attr('width', this.currentViewport.width);
         }
 
-        private createTicks(total: number): string[] {
-            var settings = this.settings;
-            var targetSettings = this.targetSettings;
-            var total = targetSettings.max - targetSettings.min;
-            var numberOfLabels = settings.labels.count;
-            var step = total / numberOfLabels;
-            var arr: string[] = [];
-            var data = this.data;
+        private createTicks(): string[] {
+            let settings = this.settings;
+            let targetSettings = this.targetSettings;
+            let total = targetSettings.max - targetSettings.min;
+            let numberOfLabels = settings.labels.count;
+            let step = total / numberOfLabels;
+            let arr: string[] = [];
+            let formatter = this.getFormatter(this.data.dataLabelsSettings, targetSettings.max);
 
-            var formatter = valueFormatter.create({
-                format: valueFormatter.getFormatString(data.metadataColumn, Gauge.formatStringProp),
-                value: targetSettings.min,
-                value2: targetSettings.max,
-                formatSingleValues: true,
-                allowFormatBeautification: true,
-                columnType: (data && data.metadataColumn) ? data.metadataColumn.type : undefined,
-            });
-
-            for (var i = 0; i < numberOfLabels + 1; i++) {
+            for (let i = 0; i < numberOfLabels + 1; i++) {
                 arr.push(formatter.format(targetSettings.min + (i * step)));
             }
 
@@ -694,16 +815,16 @@ module powerbi.visuals {
         }
 
         private updateInternal(suppressAnimations: boolean) {
-            var height = this.gaugeVisualProperties.height;
-            var width = this.gaugeVisualProperties.width;
-            var radius = this.gaugeVisualProperties.radius;
-            var margin: IMargin = this.margin;
-            var duration = AnimatorCommon.GetAnimationDuration(this.animator, suppressAnimations);
+            let height = this.gaugeVisualProperties.height;
+            let width = this.gaugeVisualProperties.width;
+            let radius = this.gaugeVisualProperties.radius;
+            let margin: IMargin = this.margin;
+            let duration = AnimatorCommon.GetAnimationDuration(this.animator, suppressAnimations);
 
-            var data = this.data;
-            var lastAngle = this.lastAngle = -Math.PI / 2 + Math.PI * data.percent;
+            let data = this.data;
+            let lastAngle = this.lastAngle = -Math.PI / 2 + Math.PI * data.percent;
 
-            var ticks = this.createTicks(data.adjustedTotal);
+            let ticks = this.createTicks();
 
             this.foregroundArcPath
                 .transition()
@@ -714,25 +835,26 @@ module powerbi.visuals {
             this.appendTextAlongArc(ticks, radius, height, width, margin);
             this.updateVisualConfigurations();
             this.updateVisualStyles();
-
-            TooltipManager.addTooltip(this.foregroundArcPath, (tooltipEvent: TooltipEvent) => data.tooltipInfo);
+            if (this.tooltipsEnabled)
+                TooltipManager.addTooltip(this.foregroundArcPath, (tooltipEvent: TooltipEvent) => data.tooltipInfo);
         }
 
         private updateVisualStyles() {
+            let fillColor: string = this.data.dataLabelsSettings.labelColor || this.style.labelText.color.value;
             this.mainGraphicsContext.selectAll('text')
                 .style({
-                    'fill': this.style.labelText.color.value
+                    'fill': fillColor,
                 });
         }
 
         private updateVisualConfigurations() {
-            var configOptions = this.settings;
+            let configOptions = this.settings;
 
             this.mainGraphicsContext
                 .select('line')
                 .attr({
                     stroke: configOptions.targetLine.color,
-                    'stroke-width': configOptions.targetLine.thickness
+                    'stroke-width': configOptions.targetLine.thickness,
                 });
 
             this.backgroundArcPath.style('fill', configOptions.arcColors.background);
@@ -741,25 +863,26 @@ module powerbi.visuals {
 
         private appendTextAlongArc(ticks: string[], radius: number, height: number, width: number, margin: IMargin) {
             this.svg.selectAll(Gauge.LabelText.selector).remove();
+            if (!this.data.dataLabelsSettings.show) return;
 
-            var total = ticks.length;
-            var divisor = total - 1;
-            var top = (radius + (height - radius) / 2 + margin.top);
-            var showMinMaxLabelsOnBottom = this.showMinMaxLabelsOnBottom();
-            var fontSize = this.style.labelText.fontSize;
-            var padding = this.settings.labels.padding;
+            let total = ticks.length;
+            let divisor = total - 1;
+            let top = (radius + (height - radius) / 2 + margin.top);
+            let showMinMaxLabelsOnBottom = this.showMinMaxLabelsOnBottom();
+            let fontSize = PixelConverter.fromPoint(this.data.dataLabelsSettings.fontSize || NewDataLabelUtils.DefaultLabelFontSizeInPt);
+            let padding = this.settings.labels.padding;
 
-            for (var count = 0; count < total; count++) {
+            for (let count = 0; count < total; count++) {
                 if (Math.floor(total / 2) === count)
                     continue; // Skip Middle label, by design
 
                 if (this.showSideNumbersLabelText()) {
 
-                    var x = (margin.left + width / 2) - (radius * Math.cos(Math.PI * count / divisor));
-                    var y = top - (radius * Math.sin(Math.PI * count / divisor));
-                    var anchor: string;
-                    var onRight = count * 2 > total;
-                    var onBottom = false;
+                    let x = (margin.left + width / 2) - (radius * Math.cos(Math.PI * count / divisor));
+                    let y = top - (radius * Math.sin(Math.PI * count / divisor));
+                    let anchor: string;
+                    let onRight = count * 2 > total;
+                    let onBottom = false;
 
                     if (showMinMaxLabelsOnBottom && (count === 0 || count === total - 1)) {
                         // If this is a min or max label and we're showing them on the bottom rather than the sides
@@ -776,7 +899,7 @@ module powerbi.visuals {
                         x += padding * (onRight ? 1 : -1);
                     }
 
-                    var text = this.mainGraphicsContext
+                    let text = this.mainGraphicsContext
                         .append('text')
                         .attr({
                             'x': x,
@@ -797,40 +920,41 @@ module powerbi.visuals {
         }
 
         private truncateTextIfNeeded(text: D3.Selection, positionX: number, onRight: boolean) {
-            var availableSpace = (onRight ? this.currentViewport.width - positionX : positionX);
+            let availableSpace = (onRight ? this.currentViewport.width - positionX : positionX);
             text.call(AxisHelper.LabelLayoutStrategy.clip,
                 availableSpace,
                 TextMeasurementService.svgEllipsis);
         }
 
+        private getFormatter(dataLabelSettings: VisualDataLabelsSettings, value2?: number): IValueFormatter {
+            let realValue2 = dataLabelSettings.displayUnits === 0 ? value2 : null;
+            let formatString: string = valueFormatter.getFormatString(this.data.metadataColumn, Gauge.formatStringProp);
+            let precision = dataLabelUtils.getLabelPrecision(dataLabelSettings.precision, formatString);
+            let valueFormatterOptions: ValueFormatterOptions = dataLabelUtils.getOptionsForLabelFormatter(dataLabelSettings, formatString, realValue2, precision);
+            valueFormatterOptions.formatSingleValues = dataLabelSettings.displayUnits > 0 ? false : true;
+            return valueFormatter.create(valueFormatterOptions);
+        }
+
         private appendTargetTextAlongArc(radius: number, height: number, width: number, margin: IMargin) {
-            var targetSettings = this.targetSettings;
+            let targetSettings = this.targetSettings;
 
-            var target = targetSettings.target;
-            var tRatio = (target - targetSettings.min) / (targetSettings.max - targetSettings.min);
-            var top = (radius + (height - radius) / 2 + margin.top);
-            var flag = tRatio > 0.5;
-            var padding = this.settings.labels.padding;
+            let target = targetSettings.target;
+            let tRatio = this.getTargetRatio();
+            let top = (radius + (height - radius) / 2 + margin.top);
+            let flag = tRatio > 0.5;
+            let padding = this.settings.labels.padding;
+            let anchor = flag ? 'start' : 'end';
+            let formatter = this.getFormatter(this.data.dataLabelsSettings, targetSettings.max);
+            let maxRatio = Math.asin(Gauge.MinDistanceFromBottom / radius) / Math.PI;
 
-            var anchor = flag ? 'start' : 'end';
-            var formatter = valueFormatter.create({
-                format: valueFormatter.getFormatString(this.data.metadataColumn, Gauge.formatStringProp),
-                value: targetSettings.min,
-                value2: targetSettings.max,
-                formatSingleValues: true,
-                allowFormatBeautification: true,
-            });
-
-            var maxRatio = Math.asin(Gauge.MinDistanceFromBottom / radius) / Math.PI;
-
-            var finalRatio = tRatio < maxRatio || tRatio > (1 - maxRatio)
+            let finalRatio = tRatio < maxRatio || tRatio > (1 - maxRatio)
                 ? flag
                     ? 1 - maxRatio
                     : maxRatio
                 : tRatio;
 
-            var targetX = (margin.left + width / 2) - ((radius + padding) * Math.cos(Math.PI * finalRatio));
-            var targetY = top - ((radius + padding) * Math.sin(Math.PI * finalRatio));
+            let targetX = (margin.left + width / 2) - ((radius + padding) * Math.cos(Math.PI * finalRatio));
+            let targetY = top - ((radius + padding) * Math.sin(Math.PI * finalRatio));
 
             if (!this.targetText) {
                 this.targetText = this.mainGraphicsContext
@@ -881,7 +1005,7 @@ module powerbi.visuals {
 
         private arcTween(transition, arr): void {
             transition.attrTween('d', (d) => {
-                var interpolate = d3.interpolate(d.endAngle, arr[0]);
+                let interpolate = d3.interpolate(d.endAngle, arr[0]);
                 return (t) => {
                     d.endAngle = interpolate(t);
                     return arr[1](d);
@@ -890,15 +1014,35 @@ module powerbi.visuals {
         }
 
         private showMinMaxLabelsOnBottom(): boolean {
-            // We want to show the start/end ticks on the bottom when there is more vertical space than horizontal
-            // and we aren't displaying other ticks on the side that will use the horizontal space anyway
-            return this.currentViewport.height > this.currentViewport.width && this.settings.labels.count <= 3;
+            // More vertical space, put labels on bottom
+            if (this.currentViewport.height > this.currentViewport.width)
+                return true;
+
+            // We want to show the start/end ticks on the bottom when there
+            // is insufficient space for the left and right label text
+            if (this.data && this.gaugeVisualProperties) {
+                let ticks = this.createTicks();
+                let visualWhitespace = (this.currentViewport.width - (this.gaugeVisualProperties.radius * 2)) / 2;
+                let maxLabelWidth = visualWhitespace - this.settings.labels.padding;
+                let textProperties: TextProperties = TextMeasurementService.getMeasurementProperties($(this.svg.node()));
+                textProperties.fontSize = PixelConverter.fromPoint(this.data.dataLabelsSettings.fontSize || NewDataLabelUtils.DefaultLabelFontSizeInPt);
+
+                let width: number;
+                for (let tickValue of [ticks[0], ticks[ticks.length - 1]]) {
+                    textProperties.text = tickValue;
+                    width = TextMeasurementService.measureSvgTextWidth(textProperties);
+                    if (width > maxLabelWidth)
+                        return true;
+                }
+            }
+            
+            return false;
         }
 
         private setMargins(): void {
             if (this.gaugeSmallViewPortProperties) {
                 if (this.gaugeSmallViewPortProperties.smallGaugeMarginsOnSmallViewPort && (this.currentViewport.height < this.gaugeSmallViewPortProperties.MinHeightGaugeSideNumbersVisible)) {
-                    var margins = this.gaugeSmallViewPortProperties.GaugeMarginsOnSmallViewPort;
+                    let margins = this.gaugeSmallViewPortProperties.GaugeMarginsOnSmallViewPort;
                     this.margin = { top: margins, bottom: margins, left: margins, right: margins };
                     return;
                 }
@@ -913,11 +1057,11 @@ module powerbi.visuals {
 
             // If we're not showing side labels, reduce the margin so that the gauge has more room to display
             if (!this.showSideNumbersLabelText() || this.showMinMaxLabelsOnBottom()) {
-                var targetSettings = this.targetSettings;
+                let targetSettings = this.targetSettings;
 
                 if (this.showTargetLabel) {
                     // If we're showing the target label, only reduce the margin on the side that doesn't have a target label
-                    var tRatio = (targetSettings.target - targetSettings.min) / (targetSettings.max - targetSettings.min);
+                    let tRatio = (targetSettings.target - targetSettings.min) / (targetSettings.max - targetSettings.min);
 
                     if (tRatio > 0.5)
                         this.margin.left = Gauge.ReducedLeftRightMargin;
@@ -929,6 +1073,17 @@ module powerbi.visuals {
                     this.margin.left = this.margin.right = Gauge.ReducedLeftRightMargin;
                 }
             }
+
+            let fontSize = 0;
+            if (this.data && this.data.dataLabelsSettings && this.data.dataLabelsSettings.fontSize && this.data.dataLabelsSettings.fontSize >= NewDataLabelUtils.DefaultLabelFontSizeInPt) {
+                fontSize = PixelConverter.fromPointToPixel(this.data.dataLabelsSettings.fontSize - NewDataLabelUtils.DefaultLabelFontSizeInPt);
+            }
+
+            if (fontSize !== 0) {
+                this.margin.bottom += fontSize;
+                this.margin.left += fontSize;
+                this.margin.right += fontSize;
+            }
         }
 
         private showSideNumbersLabelText(): boolean {
@@ -939,6 +1094,7 @@ module powerbi.visuals {
                     }
                 }
             }
+
             return true;
         }
     }

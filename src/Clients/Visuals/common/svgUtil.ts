@@ -39,7 +39,7 @@ module powerbi.visuals {
          * To avoid scientific notation, start or end the transition at 1e-6,
          * which is the smallest value that is not stringified in exponential notation.
          */
-        export var AlmostZero = 1e-6;
+        export const AlmostZero = 1e-6;
 
         /**
          * Creates a translate string for use with the SVG transform call.
@@ -80,6 +80,25 @@ module powerbi.visuals {
         }
 
         /**
+         * Creates a scale string for use in a CSS transform property.
+         */
+        export function scale(scale: number): string {
+            debug.assertValue(scale, 'scale');
+
+            return `scale(${scale})`;
+        }
+
+        /**
+         * Creates a transform origin string for use in a CSS transform-origin property.
+         */
+        export function transformOrigin(xOffset: string, yOffset: string): string {
+            debug.assertValue(xOffset, 'xOffset');
+            debug.assertValue(yOffset, 'yOffset');
+
+            return `${xOffset} ${yOffset}`;
+        }
+
+        /**
          * Forces all D3 transitions to complete.
          * Normally, zero-delay transitions are executed after an instantaneous delay (<10ms). 
          * This can cause a brief flicker if the browser renders the page twice: once at the end of the first event loop, 
@@ -89,7 +108,7 @@ module powerbi.visuals {
          * These flickers are noticable on IE, and with a large number of webviews(not recommend you ever do this) on iOS.
          */
         export function flushAllD3Transitions() {
-            var now = Date.now;
+            let now = Date.now;
             Date.now = function () { return Infinity; };
             d3.timer.flush();
             Date.now = now;
@@ -102,9 +121,9 @@ module powerbi.visuals {
             if (!options)
                 return;
 
-            var animationOptions: AnimationOptions = <AnimationOptions>options;
+            let animationOptions: AnimationOptions = <AnimationOptions>options;
 
-            var asVisualInitOptions = <VisualInitOptions>options;
+            let asVisualInitOptions = <VisualInitOptions>options;
             if (asVisualInitOptions.animation)
                 animationOptions = asVisualInitOptions.animation;
 
@@ -147,24 +166,24 @@ module powerbi.visuals {
                     y: "0",
                 };
             }
-            var translateCoordinates = input.split(/[\s,]+/);
+            let translateCoordinates = input.split(/[\s,]+/);
 
             debug.assertValue(translateCoordinates, 'translateCoordinates');
             debug.assert(translateCoordinates.length > 0, 'translate array must atleast have one value');
 
-            var yValue = '0';
-            var xValue: string;
-            var xCoord = translateCoordinates[0];
+            let yValue = '0';
+            let xValue: string;
+            let xCoord = translateCoordinates[0];
 
             // Y coordinate is ommited in I.E if it is 0, so need to check against that
             if (translateCoordinates.length === 1) {
                 // 10 refers to the length of 'translate('
                 xValue = xCoord.substring(10, xCoord.length - 1);
             } else {
-                var yCoord = translateCoordinates[1];
+                let yCoord = translateCoordinates[1];
                 yValue = yCoord.substring(0, yCoord.length - 1);
                 // 10 refers to the length of 'translate('
-                var xValue = xCoord.substring(10, xCoord.length);
+                xValue = xCoord.substring(10, xCoord.length);
             }
 
             return {
@@ -174,24 +193,34 @@ module powerbi.visuals {
         }
 
         /**
-         * Appends 'px' to the end of number value for use as pixel string in styles.
-         */
-        export function convertToPixelString(value: number): string {
-            return value + "px";
-        }
-
-        /**
          * Create an arrow.
          */
         export function createArrow(width: number, height: number, rotate: number): { path: string; transform: string } {
-            var transform = "rotate(" + rotate + " " + width / 2 + " " + height / 2 + ")";
-            var path = "M0 0";
+            let transform = "rotate(" + rotate + " " + width / 2 + " " + height / 2 + ")";
+            let path = "M0 0";
             path += "L0 " + height;
             path += "L" + width + " " + height / 2 + " Z";
             return {
                 path: path,
                 transform: transform
             };
+        }
+
+        /**
+         * Use the ratio of the scaled bounding rect and the SVG DOM bounding box to get the x and y transform scale values
+         */
+        export function getTransformScaleRatios(svgElement: SVGSVGElement): Point {
+            if (svgElement != null) {
+                let scaledRect = svgElement.getBoundingClientRect();
+                let domRect = svgElement.getBBox();
+                if (domRect.height > 0 && domRect.width > 0) {
+                    return {
+                        x: scaledRect.width / domRect.width,
+                        y: scaledRect.height / domRect.height
+                    };
+                }
+            }
+            return { x: 1, y: 1 };
         }
     }
 }

@@ -59,10 +59,10 @@ module powerbi {
     module FormattingEncoder {
         export function preserveEscaped(format: string, specialChars: string): string {
             // Unicode U+E000 - U+F8FF is a private area and so we can use the chars from the range to encode the escaped sequences
-            var length = specialChars.length;
-            for (var i = 0; i < length; i++) {
-                var oldText = "\\" + specialChars[i];
-                var newText = String.fromCharCode(0xE000 + i);
+            let length = specialChars.length;
+            for (let i = 0; i < length; i++) {
+                let oldText = "\\" + specialChars[i];
+                let newText = String.fromCharCode(0xE000 + i);
                 format = StringExtensions.replaceAll(format, oldText, newText);
             }
             return format;
@@ -70,10 +70,10 @@ module powerbi {
 
         export function restoreEscaped(format: string, specialChars: string): string {
             // After formatting is complete we should restore the encoded escaped chars into the unescaped chars
-            var length = specialChars.length;
-            for (var i = 0; i < length; i++) {
-                var oldText = String.fromCharCode(0xE000 + i);
-                var newText = specialChars[i];
+            let length = specialChars.length;
+            for (let i = 0; i < length; i++) {
+                let oldText = String.fromCharCode(0xE000 + i);
+                let newText = specialChars[i];
                 format = StringExtensions.replaceAll(format, oldText, newText);
             }
             return StringExtensions.replaceAll(format, "\\", "");
@@ -82,33 +82,35 @@ module powerbi {
         export function preserveLiterals(format: string, literals: string[]): string {
             // Unicode U+E000 - U+F8FF is a private area and so we can use the chars from the range to encode the escaped sequences
             format = StringExtensions.replaceAll(format, "\"", "'");
-            for (var i = 0; ; i++) {
-                var fromIndex = format.indexOf("'");
+            for (let i = 0; ; i++) {
+                let fromIndex = format.indexOf("'");
                 if (fromIndex < 0) {
                     break;
                 }
-                var toIndex = format.indexOf("'", fromIndex + 1);
+                let toIndex = format.indexOf("'", fromIndex + 1);
                 if (toIndex < 0) {
                     break;
                 }
-                var literal = format.substring(fromIndex, toIndex + 1);
+                let literal = format.substring(fromIndex, toIndex + 1);
                 literals.push(literal.substring(1, toIndex - fromIndex));
-                var token = String.fromCharCode(0xE100 + i);
+                let token = String.fromCharCode(0xE100 + i);
                 format = format.replace(literal, token);
             }
             return format;
         }
 
         export function restoreLiterals(format: string, literals: string[]): string {
-            var count = literals.length;
-            for (var i = 0; i < count; i++) {
-                var token = String.fromCharCode(0xE100 + i);
-                var literal = literals[i];
+            let count = literals.length;
+            for (let i = 0; i < count; i++) {
+                let token = String.fromCharCode(0xE100 + i);
+                let literal = literals[i];
                 format = format.replace(token, literal);
             }
             return format;
         }
     }
+
+    const IndexedTokensRegex = /({{)|(}})|{(\d+[^}]*)}/g;
 
     /** Formatting Service */ 
     class FormattingService implements IFormattingService {
@@ -122,7 +124,7 @@ module powerbi {
             if (value === undefined || value === null) {
                 return '';
             }
-            var gculture = this.getCulture(culture);
+            let gculture = this.getCulture(culture);
 
             if (DateTimeFormat.canFormat(value)) {
                 // Dates
@@ -140,15 +142,15 @@ module powerbi {
             if (!formatWithIndexedTokens) {
                 return "";
             }
-            var result = formatWithIndexedTokens.replace(/({{)|(}})|{(\d+[^}]*)}/g, (match: string, left: string, right: string, argToken: string) => {
+            let result = formatWithIndexedTokens.replace(IndexedTokensRegex, (match: string, left: string, right: string, argToken: string) => {
                 if (left) {
                     return "{";
                 } else if (right) {
                     return "}";
                 } else {
-                    var parts = argToken.split(":");
-                    var argIndex = parseInt(parts[0], 10);
-                    var argFormat = parts[1];
+                    let parts = argToken.split(":");
+                    let argIndex = parseInt(parts[0], 10);
+                    let argFormat = parts[1];
                     return this.formatValue(args[argIndex], argFormat, culture);
                 }
                 return "";
@@ -162,7 +164,7 @@ module powerbi {
         }
 
         public formatNumberWithCustomOverride(value: number, format: string, nonScientificOverrideFormat: string, culture?: string): string {
-            var gculture = this.getCulture(culture);
+            let gculture = this.getCulture(culture);
 
             return NumberFormat.formatWithCustomOverride(value, format, nonScientificOverrideFormat, gculture);
         }
@@ -195,7 +197,7 @@ module powerbi {
                 }
                 return this._currentCulture;
             } else {
-                var culture = Globalize.findClosestCulture(cultureSelector);
+                let culture = Globalize.findClosestCulture(cultureSelector);
                 if (!culture)
                     culture = Globalize.culture("en-US");
                 return culture;
@@ -204,12 +206,12 @@ module powerbi {
 
         /** By default the Globalization module initializes to the culture/calendar provided in the language/culture URL params */
         private initialize() {
-            var cultureName = this.getUrlParam("language") || window["cultureInfo"] || window.navigator.userLanguage || window.navigator["language"] || Globalize.culture().name;
+            let cultureName = this.getUrlParam("language") || window["cultureInfo"] || window.navigator.userLanguage || window.navigator["language"] || Globalize.culture().name;
             this.setCurrentCulture(cultureName);
-            var calendarName = this.getUrlParam("calendar");
+            let calendarName = this.getUrlParam("calendar");
             if (calendarName) {
-                var culture = this._currentCulture;
-                var c = culture.calendars[calendarName];
+                let culture = this._currentCulture;
+                let c = culture.calendars[calendarName];
                 if (c) {
                     culture.calendar = c;
                 }
@@ -217,7 +219,7 @@ module powerbi {
         }
 
         private getUrlParam(name: string): string {
-            var param = window.location.search.match(RegExp("[?&]" + name + "=([^&]*)"));
+            let param = window.location.search.match(RegExp("[?&]" + name + "=([^&]*)"));
             return param ? param[1] : undefined;
         }
     }
@@ -229,19 +231,19 @@ module powerbi {
      */
     module DateTimeFormat {
 
-        var _currentCachedFormat: string;
-        var _currentCachedProcessedFormat: string;
+        let _currentCachedFormat: string;
+        let _currentCachedProcessedFormat: string;
 
         /** Evaluates if the value can be formatted using the NumberFormat */
         export function canFormat(value: any) {
-            var result = value instanceof Date;
+            let result = value instanceof Date;
             return result;
         }
 
         /** Formats the date using provided format and culture */
         export function format(value: Date, format: string, culture: Culture): string {
             format = format || "G";
-            var isStandard = format.length === 1;
+            let isStandard = format.length === 1;
             try {
                 if (isStandard) {
                     return formatDateStandard(value, format, culture);
@@ -256,11 +258,11 @@ module powerbi {
         /** Formats the date using standard format expression */
         function formatDateStandard(value: Date, format: string, culture: Culture) {
             // In order to provide parity with .NET we have to support additional set of DateTime patterns.
-            var patterns = culture.calendar.patterns;
+            let patterns = culture.calendar.patterns;
             // Extend supported set of patterns
             ensurePatterns(culture.calendar);
             // Handle extended set of formats
-            var output = Formatting.findDateFormat(value, format, culture.name);
+            let output = Formatting.findDateFormat(value, format, culture.name);
             if (output.format.length === 1)
                 format = patterns[output.format];
             else
@@ -272,8 +274,8 @@ module powerbi {
 
         /** Formats the date using custom format expression */
         function formatDateCustom(value: Date, format: string, culture: Culture): string {
-            var result: string;
-            var literals: string[] = [];
+            let result: string;
+            let literals: string[] = [];
             format = FormattingEncoder.preserveEscaped(format, "\\dfFghHKmstyz:/%'\"");
             format = FormattingEncoder.preserveLiterals(format, literals);
             format = StringExtensions.replaceAll(format, "\"", "'");
@@ -282,7 +284,7 @@ module powerbi {
                 // Replace all sequences of F longer than 3 with "FFF"
                 format = StringExtensions.replaceAll(format, "FFFF", "FFF");
                 // Based on milliseconds update the format to use fff
-                var milliseconds = value.getMilliseconds();
+                let milliseconds = value.getMilliseconds();
                 if (milliseconds % 10 >= 1) {
                     format = StringExtensions.replaceAll(format, "FFF", "fff");
                 }
@@ -319,14 +321,14 @@ module powerbi {
 
         /** Localizes the time separator symbol */
         function localize(value: string, dictionary: any): string {
-            var timeSeparator = dictionary[":"];
+            let timeSeparator = dictionary[":"];
             if (timeSeparator === ":") {
                 return value;
             }
-            var result = "";
-            var count = value.length;
-            for (var i = 0; i < count; i++) {
-                var char = value.charAt(i);
+            let result = "";
+            let count = value.length;
+            for (let i = 0; i < count; i++) {
+                let char = value.charAt(i);
                 switch (char) {
                     case ":":
                         result += timeSeparator;
@@ -340,7 +342,7 @@ module powerbi {
         }
 
         function ensurePatterns(calendar: GlobalizeCalendar) {
-            var patterns = calendar.patterns;
+            let patterns = calendar.patterns;
             if (patterns["g"] === undefined) {
                 patterns["g"] = patterns["f"].replace(patterns["D"], patterns["d"]);  // Generic: Short date, short time
                 patterns["G"] = patterns["F"].replace(patterns["D"], patterns["d"]);  // Generic: Short date, long time
@@ -356,6 +358,12 @@ module powerbi {
      */
     export module NumberFormat {
 
+        const NonScientificFormatRegex = /^\{.+\}.*/;
+        const NumericalPlaceHolderRegex = /\{.+\}/;
+        const ScientificFormatRegex = /e[+-]*0+/i;
+        const StandardFormatRegex = /^[a-z]\d{0,2}$/i; // a letter + up to 2 digits for precision specifier
+        const TrailingZerosRegex = /0+$/;
+
         export interface NumericFormatMetadata {
             format: string;
             hasEscapes: boolean;
@@ -369,19 +377,49 @@ module powerbi {
             scale: number;
         }
 
-        var _lastCustomFormatMeta: NumericFormatMetadata;
+        export interface NumberFormatComponents {
+            hasNegative: boolean;
+            positive: string;
+            negative: string;
+            zero: string;
+        }
+
+        export function getComponents(format: string): NumberFormatComponents {
+            let signFormat: NumberFormatComponents = {
+                hasNegative: false,
+                positive: format,
+                negative: format,
+                zero: format,
+            };
+
+            let signSpecificFormats = format.split(";");
+            let formatCount = signSpecificFormats.length;
+            debug.assert(!(formatCount > 3), 'format string should be of form positive[;negative;zero]');
+
+            if (formatCount > 1) {
+                signFormat.hasNegative = true;
+
+                signFormat.positive = signFormat.zero = signSpecificFormats[0];
+                signFormat.negative = signSpecificFormats[1];
+
+                if (formatCount > 2)
+                    signFormat.zero = signSpecificFormats[2];
+            }
+
+            return signFormat;
+        }
+
+        let _lastCustomFormatMeta: NumericFormatMetadata;
 
         /** Evaluates if the value can be formatted using the NumberFormat */
         export function canFormat(value: any) {
-            var result = typeof (value) === "number";
+            let result = typeof (value) === "number";
             return result;
         }
 
         export function isStandardFormat(format: string): boolean {
             debug.assertValue(format, 'format');
-
-            var standardFormatRegex = /^[a-z]\d{0,2}$/gi;  // a letter + up to 2 digits for precision specifier
-            return standardFormatRegex.test(format);
+            return StandardFormatRegex.test(format);
         }
 
         /** Formats the number using specified format expression and culture */
@@ -417,17 +455,17 @@ module powerbi {
 
         /** Formats the number using standard format expression */
         function formatNumberStandard(value: number, format: string, culture: Culture): string {
-            var result: string;
-            var precision = <number>(format.length > 1 ? parseInt(format.substr(1, format.length - 1), 10) : undefined);
-            var numberFormatInfo = culture.numberFormat;
-            var formatChar = format.charAt(0);
+            let result: string;
+            let precision = <number>(format.length > 1 ? parseInt(format.substr(1, format.length - 1), 10) : undefined);
+            let numberFormatInfo = culture.numberFormat;
+            let formatChar = format.charAt(0);
             switch (formatChar) {
                 case "e":
                 case "E":
                     if (precision === undefined) {
                         precision = 6;
                     }
-                    var mantissaDecimalDigits = StringExtensions.repeat("0", precision);
+                    let mantissaDecimalDigits = StringExtensions.repeat("0", precision);
                     format = "0." + mantissaDecimalDigits + formatChar + "+000";
                     result = formatNumberCustom(value, format, culture);
                     break;
@@ -438,7 +476,7 @@ module powerbi {
                     break;
                 case "g":
                 case "G":
-                    var abs = Math.abs(value);
+                    let abs = Math.abs(value);
                     if (abs === 0 || (1E-4 <= abs && abs < 1E15)) {
                         // For the range of 0.0001 to 1,000,000,000,000,000 - use the normal form
                         result = precision !== undefined ? value.toPrecision(precision) : value.toString();
@@ -461,14 +499,15 @@ module powerbi {
                         result = result.toUpperCase();
                     }
                     if (precision !== undefined) {
-                        var actualPrecision = result.length;
-                        var isNegative = value < 0;
+                        let actualPrecision = result.length;
+                        let isNegative = value < 0;
                         if (isNegative) {
                             actualPrecision--;
                         }
-                        var paddingZerosCount = precision - actualPrecision;
+                        let paddingZerosCount = precision - actualPrecision;
+                        let paddingZeros = undefined;
                         if (paddingZerosCount > 0) {
-                            var paddingZeros = StringExtensions.repeat("0", paddingZerosCount);
+                            paddingZeros = StringExtensions.repeat("0", paddingZerosCount);
                         }
                         if (isNegative) {
                             result = "-" + paddingZeros + result.substr(1);
@@ -490,86 +529,79 @@ module powerbi {
             format: string,
             culture: Culture,
             nonScientificOverrideFormat?: string): string {
-            var result: string;
-            var numberFormatInfo = culture.numberFormat;
+            let result: string;
+            let numberFormatInfo = culture.numberFormat;
             if (isFinite(value)) {
-                // Split format into positive;negative;zero patterns
-                var signSpecificFormats = format.split(";");
-                if (signSpecificFormats.length > 1) {
-                    var negativeFormat = format;
-                    var positiveFormat = format;
-                    var zeroFormat = format;
-                    if (signSpecificFormats.length === 2) {
-                        positiveFormat = zeroFormat = signSpecificFormats[0];
-                        negativeFormat = signSpecificFormats[1];
-                    } else {
-                        positiveFormat = signSpecificFormats[0];
-                        negativeFormat = signSpecificFormats[1];
-                        zeroFormat = signSpecificFormats[2];
-                    }
-                    // Pick a format based on the sign of value
-                    if (value > 0) {
-                        format = positiveFormat;
-                    } else if (value === 0) {
-                        format = zeroFormat;
-                    } else {
-                        format = negativeFormat;
-                    }
-                    value = Math.abs(value);
+                // Split format by positive[;negative;zero] pattern
+                let formatComponents = getComponents(format);
+
+                // Pick a format based on the sign of value
+                if (value > 0) {
+                    format = formatComponents.positive;
+                } else if (value === 0) {
+                    format = formatComponents.zero;
+                } else {
+                    format = formatComponents.negative;
                 }
 
+                // Normalize value if we have an explicit negative format
+                if (formatComponents.hasNegative)
+                    value = Math.abs(value);
+
                 // Get format metadata
-                var formatMeta = getCustomFormatMetadata(format);
+                let formatMeta = getCustomFormatMetadata(format, true /*calculatePrecision*/);
 
                 // Preserve literals and escaped chars
                 if (formatMeta.hasEscapes) {
                     format = FormattingEncoder.preserveEscaped(format, "\\0#.,%‰");
                 }
-                var literals: string[] = [];
+                let literals: string[] = [];
                 if (formatMeta.hasQuotes) {
                     format = FormattingEncoder.preserveLiterals(format, literals);
                 }
 
                 // Scientific format
                 if (formatMeta.hasE && !nonScientificOverrideFormat) {
-                    var scientificMatch = /e[+-]*0+/gi.exec(format);
+                    let scientificMatch = ScientificFormatRegex.exec(format);
                     if (scientificMatch) {
                         // Case 2.1. Scientific custom format
-                        var formatM = format.substr(0, scientificMatch.index);
-                        var formatE = format.substr(scientificMatch.index + scientificMatch[0].indexOf("0"));
-                        var precision = getCustomFormatPrecision(formatM, formatMeta);
-                        var scale = getCustomFormatScale(formatM, formatMeta);
+                        let formatM = format.substr(0, scientificMatch.index);
+                        let formatE = format.substr(scientificMatch.index + scientificMatch[0].indexOf("0"));
+                        let precision = getCustomFormatPrecision(formatM, formatMeta);
+                        let scale = getCustomFormatScale(formatM, formatMeta);
                         if (scale !== 1) {
                             value = value * scale;
                         }
-                        var s = value.toExponential(precision);
-                        var indexOfE = s.indexOf("e");
-                        var mantissa = s.substr(0, indexOfE);
-                        var exp = s.substr(indexOfE + 1);
-                        var resultM = fuseNumberWithCustomFormat(mantissa, formatM, numberFormatInfo);
-                        var resultE = fuseNumberWithCustomFormat(exp, formatE, numberFormatInfo);
+                        let s = value.toExponential(precision);
+                        let indexOfE = s.indexOf("e");
+                        let mantissa = s.substr(0, indexOfE);
+                        let exp = s.substr(indexOfE + 1);
+                        let resultM = fuseNumberWithCustomFormat(mantissa, formatM, numberFormatInfo);
+                        let resultE = fuseNumberWithCustomFormat(exp, formatE, numberFormatInfo);
                         if (resultE.charAt(0) === "+" && scientificMatch[0].charAt(1) !== "+") {
                             resultE = resultE.substr(1);
                         }
-                        var e = scientificMatch[0].charAt(0);
+                        let e = scientificMatch[0].charAt(0);
                         result = resultM + e + resultE;
                     }
                 }
 
                 // Non scientific format
                 if (result === undefined) {
-                    var valueFormatted: string;
+                    let valueFormatted: string;
+                    let isValueGlobalized: boolean = false;
                     if (nonScientificOverrideFormat) {
                         valueFormatted = formattingService.format(nonScientificOverrideFormat, [value], culture.name);
+                        isValueGlobalized = true;
                     } else {
-                        var precision = getCustomFormatPrecision(format, formatMeta);
-                        var scale = getCustomFormatScale(format, formatMeta);
+                        let precision = getCustomFormatPrecision(format, formatMeta);
+                        let scale = getCustomFormatScale(format, formatMeta);
                         if (scale !== 1) {
                             value = value * scale;
                         }
                         valueFormatted = toNonScientific(value, precision);
                     }
-                    result = fuseNumberWithCustomFormat(valueFormatted, format, numberFormatInfo, !!nonScientificOverrideFormat);
+                    result = fuseNumberWithCustomFormat(valueFormatted, format, numberFormatInfo, nonScientificOverrideFormat, isValueGlobalized);
                 }
                 if (formatMeta.hasQuotes) {
                     result = FormattingEncoder.restoreLiterals(result, literals);
@@ -587,17 +619,17 @@ module powerbi {
 
         /** Returns string with the fixed point respresentation of the number */
         function toNonScientific(value: number, precision: number): string {
-            var result = "";
-            var precisionZeros = 0;
+            let result = "";
+            let precisionZeros = 0;
             // Double precision numbers support actual 15-16 decimal digits of precision.
             if (precision > 16) {
                 precisionZeros = precision - 16;
                 precision = 16;
             }
-            var digitsBeforeDecimalPoint = Double.log10(Math.abs(value));
+            let digitsBeforeDecimalPoint = Double.log10(Math.abs(value));
             if (digitsBeforeDecimalPoint < 16) {
                 if (digitsBeforeDecimalPoint > 0) {
-                    var maxPrecision = 16 - digitsBeforeDecimalPoint;
+                    let maxPrecision = 16 - digitsBeforeDecimalPoint;
                     if (precision > maxPrecision) {
                         precisionZeros += precision - maxPrecision;
                         precision = maxPrecision;
@@ -616,12 +648,12 @@ module powerbi {
                 // So we need to check for range and convert the to exponential with the max precision. 
                 // Then we convert exponential string to fixed by removing the dot and padding with "power" zeros.
                 result = value.toExponential(15);
-                var indexOfE = result.indexOf("e");
+                let indexOfE = result.indexOf("e");
                 if (indexOfE > 0) {
-                    var indexOfDot = result.indexOf(".");
-                    var mantissa = result.substr(0, indexOfE);
-                    var exp = result.substr(indexOfE + 1);
-                    var powerZeros = parseInt(exp, 10) - (mantissa.length - indexOfDot - 1);
+                    let indexOfDot = result.indexOf(".");
+                    let mantissa = result.substr(0, indexOfE);
+                    let exp = result.substr(indexOfE + 1);
+                    let powerZeros = parseInt(exp, 10) - (mantissa.length - indexOfDot - 1);
                     result = mantissa.replace(".", "") + StringExtensions.repeat("0", powerZeros);
                     if (precision > 0) {
                         result = result + "." + StringExtensions.repeat("0", precision);
@@ -634,12 +666,20 @@ module powerbi {
             return result;
         }
 
-        /** Returns the formatMetadata of the format */
+        /**
+         * Returns the formatMetadata of the format
+         * When calculating precision and scale, if format string of
+         * positive[;negative;zero] => positive format will be used
+         * @param (required) format - format string
+         * @param (optional) calculatePrecision - calculate precision of positive format
+         * @param (optional) calculateScale - calculate scale of positive format
+         */
         export function getCustomFormatMetadata(format: string, calculatePrecision?: boolean, calculateScale?: boolean): NumericFormatMetadata {
             if (_lastCustomFormatMeta !== undefined && format === _lastCustomFormatMeta.format) {
                 return _lastCustomFormatMeta;
             }
-            var result = {
+
+            let result = {
                 format: format,
                 hasEscapes: false,
                 hasQuotes: false,
@@ -651,9 +691,9 @@ module powerbi {
                 precision: -1,
                 scale: -1,
             };
-            var length = format.length;
-            for (var i = 0; i < length; i++) {
-                var c = format.charAt(i);
+
+            for (let i = 0, length = format.length; i < length; i++) {
+                let c = format.charAt(i);
                 switch (c) {
                     case "\\":
                         result.hasEscapes = true;
@@ -681,27 +721,29 @@ module powerbi {
                 }
             }
 
+            // Use positive format for calculating these values
+            let formatComponents = getComponents(format);
             if (calculatePrecision)
-                result.precision = getCustomFormatPrecision(format, result);
-
+                result.precision = getCustomFormatPrecision(formatComponents.positive, result);
             if (calculateScale)
-                result.scale = getCustomFormatScale(format, result);
+                result.scale = getCustomFormatScale(formatComponents.positive, result);
 
             return result;
         }
     
-        /** Returns the decimal precision of format based on the number of # and 0 chars after the decimal point */
+        /** Returns the decimal precision of format based on the number of # and 0 chars after the decimal point
+          * Important: The input format string needs to be split to the appropriate pos/neg/zero portion to work correctly */
         function getCustomFormatPrecision(format: string, formatMeta: NumericFormatMetadata): number {
             if (formatMeta.precision > -1) {
                 return formatMeta.precision;
             }
-            var result = 0;
+            let result = 0;
             if (formatMeta.hasDots) {
-                var dotIndex = format.indexOf(".");
+                let dotIndex = format.indexOf(".");
                 if (dotIndex > -1) {
-                    var count = format.length;
-                    for (var i = dotIndex; i < count; i++) {
-                        var char = format.charAt(i);
+                    let count = format.length;
+                    for (let i = dotIndex; i < count; i++) {
+                        let char = format.charAt(i);
                         if (char === "#" || char === "0")
                             result++;
                     }
@@ -717,7 +759,7 @@ module powerbi {
             if (formatMeta.scale > -1) {
                 return formatMeta.scale;
             }
-            var result = 1;
+            let result = 1;
             if (formatMeta.hasPercent && format.indexOf("%") > -1) {
                 result = result * 100;
             }
@@ -725,12 +767,12 @@ module powerbi {
                 result = result * 1000;
             }
             if (formatMeta.hasCommas) {
-                var dotIndex = format.indexOf(".");
+                let dotIndex = format.indexOf(".");
                 if (dotIndex === -1) {
                     dotIndex = format.length;
                 }
-                for (var i = dotIndex - 1; i > -1; i--) {
-                    var char = format.charAt(i);
+                for (let i = dotIndex - 1; i > -1; i--) {
+                    let char = format.charAt(i);
                     if (char === ",") {
                         result = result / 1000;
                     } else {
@@ -742,49 +784,61 @@ module powerbi {
             return result;
         }
 
-        function fuseNumberWithCustomFormat(value: string, format: string, numberFormatInfo: GlobalizeNumberFormat, suppressModifyValue?: boolean): string {
-            var formatParts = format.split(".", 2);
+        function fuseNumberWithCustomFormat(value: string, format: string, numberFormatInfo: GlobalizeNumberFormat, nonScientificOverrideFormat?: string, isValueGlobalized?: boolean): string {
+            let suppressModifyValue = !!nonScientificOverrideFormat;
+            let formatParts = format.split(".", 2);
             if (formatParts.length === 2) {
-                var wholeFormat = formatParts[0];
-                var fractionFormat = formatParts[1];
+                let wholeFormat = formatParts[0];
+                let fractionFormat = formatParts[1];
+                let displayUnit = "";
 
-                var valueParts = value.split(".", 2);
-                var wholeValue = valueParts[0];
-                var fractionValue = valueParts.length === 2 ? valueParts[1].replace(/0+$/, "") : "";
+                // Remove display unit from value before splitting on "." as localized display units sometimes end with "."
+                if (nonScientificOverrideFormat) {
+                    debug.assert(NonScientificFormatRegex.test(nonScientificOverrideFormat), "Number should always precede the display unit");
+                    displayUnit = nonScientificOverrideFormat.replace(NumericalPlaceHolderRegex, "");
+                    value = value.replace(displayUnit, "");
+                }
+                
+                let globalizedDecimalSeparator = numberFormatInfo["."];
+                let decimalSeparator = isValueGlobalized ? globalizedDecimalSeparator : ".";
+                let valueParts = value.split(decimalSeparator, 2);
+                let wholeValue = valueParts.length === 1 ? valueParts[0] + displayUnit : valueParts[0];
+                let fractionValue = valueParts.length === 2 ? valueParts[1] + displayUnit : "";
+                fractionValue = fractionValue.replace(TrailingZerosRegex, "");
 
-                var wholeFormattedValue = fuseNumberWithCustomFormatLeft(wholeValue, wholeFormat, numberFormatInfo, suppressModifyValue);
-                var fractionFormattedValue = fuseNumberWithCustomFormatRight(fractionValue, fractionFormat, suppressModifyValue);
+                let wholeFormattedValue = fuseNumberWithCustomFormatLeft(wholeValue, wholeFormat, numberFormatInfo, suppressModifyValue);
+                let fractionFormattedValue = fuseNumberWithCustomFormatRight(fractionValue, fractionFormat, suppressModifyValue);
 
                 if (fractionFormattedValue.fmtOnly || fractionFormattedValue.value === "")
                     return wholeFormattedValue + fractionFormattedValue.value;
 
-                return wholeFormattedValue + numberFormatInfo["."] + fractionFormattedValue.value;
+                return wholeFormattedValue + globalizedDecimalSeparator + fractionFormattedValue.value;
             }
             return fuseNumberWithCustomFormatLeft(value, format, numberFormatInfo, suppressModifyValue);
         }
 
         function fuseNumberWithCustomFormatLeft(value: string, format: string, numberFormatInfo: GlobalizeNumberFormat, suppressModifyValue?: boolean): string {
-            var groupSymbolIndex = format.indexOf(",");
-            var enableGroups = groupSymbolIndex > -1 && groupSymbolIndex < Math.max(format.lastIndexOf("0"), format.lastIndexOf("#")) && numberFormatInfo[","];
-            var groupDigitCount = 0;
-            var groupIndex = 0;
-            var groupSizes = numberFormatInfo.groupSizes || [3];
-            var groupSize = groupSizes[0];
-            var groupSeparator = numberFormatInfo[","];
-            var sign = "";
-            var firstChar = value.charAt(0);
+            let groupSymbolIndex = format.indexOf(",");
+            let enableGroups = groupSymbolIndex > -1 && groupSymbolIndex < Math.max(format.lastIndexOf("0"), format.lastIndexOf("#")) && numberFormatInfo[","];
+            let groupDigitCount = 0;
+            let groupIndex = 0;
+            let groupSizes = numberFormatInfo.groupSizes || [3];
+            let groupSize = groupSizes[0];
+            let groupSeparator = numberFormatInfo[","];
+            let sign = "";
+            let firstChar = value.charAt(0);
             if (firstChar === "+" || firstChar === "-") {
                 sign = numberFormatInfo[firstChar];
                 value = value.substr(1);
             }
-            var isZero = value === "0";
-            var result = "";
-            var leftBuffer = "";
-            var vi = value.length - 1;
-            var fmtOnly = true;
+            let isZero = value === "0";
+            let result = "";
+            let leftBuffer = "";
+            let vi = value.length - 1;
+            let fmtOnly = true;
             // Iterate through format chars and replace 0 and # with the digits from the value string
-            for (var fi = format.length - 1; fi > -1; fi--) {
-                var formatChar = format.charAt(fi);
+            for (let fi = format.length - 1; fi > -1; fi--) {
+                let formatChar = format.charAt(fi);
                 switch (formatChar) {
                     case "0":
                     case "#":
@@ -864,9 +918,9 @@ module powerbi {
         }
 
         function fuseNumberWithCustomFormatRight(value: string, format: string, suppressModifyValue?: boolean): { value: string; fmtOnly?: boolean } {
-            var vi = 0;
-            var fCount = format.length;
-            var vCount = value.length;
+            let vi = 0;
+            let fCount = format.length;
+            let vCount = value.length;
             if (suppressModifyValue) {
                 debug.assert(fCount > 0, "Empty formatting string");
 
@@ -882,10 +936,10 @@ module powerbi {
                 };
             }
 
-            var result = "",
+            let result = "",
                 fmtOnly: boolean = true;
-            for (var fi = 0; fi < fCount; fi++) {
-                var formatChar = format.charAt(fi);
+            for (let fi = 0; fi < fCount; fi++) {
+                let formatChar = format.charAt(fi);
                 if (vi < vCount) {
                     switch (formatChar) {
                         case "0":
@@ -911,17 +965,17 @@ module powerbi {
         }
 
         function localize(value: string, dictionary: any): string {
-            var plus = dictionary["+"];
-            var minus = dictionary["-"];
-            var dot = dictionary["."];
-            var comma = dictionary[","];
+            let plus = dictionary["+"];
+            let minus = dictionary["-"];
+            let dot = dictionary["."];
+            let comma = dictionary[","];
             if (plus === "+" && minus === "-" && dot === "." && comma === ",") {
                 return value;
             }
-            var count = value.length;
-            var result = "";
-            for (var i = 0; i < count; i++) {
-                var char = value.charAt(i);
+            let count = value.length;
+            let result = "";
+            for (let i = 0; i < count; i++) {
+                let char = value.charAt(i);
                 switch (char) {
                     case "+":
                         result = result + plus;
@@ -963,29 +1017,29 @@ module powerbi {
          * @param culture - culture which calendar info is going to be used to derive the formats.
          */
         constructor(culture: Culture) {
-            var calendar: Calendar = culture.calendar;
-            var patterns: any = calendar.patterns;
-            var monthAbbreviations: any = calendar["months"]["namesAbbr"];
-            var cultureHasMonthAbbr: boolean = monthAbbreviations && monthAbbreviations[0];
-            var yearMonthPattern: string = patterns["Y"];
-            var monthDayPattern: string = patterns["M"];
-            var fullPattern: string = patterns["f"];
-            var longTimePattern: string = patterns["T"];
-            var shortTimePattern: string = patterns["t"];
-            var separator: string = fullPattern.indexOf(",") > -1 ? ", " : " ";
+            let calendar: Calendar = culture.calendar;
+            let patterns: any = calendar.patterns;
+            let monthAbbreviations: any = calendar["months"]["namesAbbr"];
+            let cultureHasMonthAbbr: boolean = monthAbbreviations && monthAbbreviations[0];
+            let yearMonthPattern: string = patterns["Y"];
+            let monthDayPattern: string = patterns["M"];
+            let fullPattern: string = patterns["f"];
+            let longTimePattern: string = patterns["T"];
+            let shortTimePattern: string = patterns["t"];
+            let separator: string = fullPattern.indexOf(",") > -1 ? ", " : " ";
 
-            var hasYearSymbol: boolean = yearMonthPattern.indexOf("yyyy'") === 0 && yearMonthPattern.length > 6 && yearMonthPattern[6] === '\'';
+            let hasYearSymbol: boolean = yearMonthPattern.indexOf("yyyy'") === 0 && yearMonthPattern.length > 6 && yearMonthPattern[6] === '\'';
             this.YearPattern = hasYearSymbol ? yearMonthPattern.substr(0, 7) : "yyyy";
 
-            var yearPos: number = fullPattern.indexOf("yy");
-            var monthPos: number = fullPattern.indexOf("MMMM");
+            let yearPos: number = fullPattern.indexOf("yy");
+            let monthPos: number = fullPattern.indexOf("MMMM");
             this.MonthPattern = cultureHasMonthAbbr && monthPos > -1 ? (yearPos > monthPos ? "MMM yyyy" : "yyyy MMM") : yearMonthPattern;
 
             this.DayPattern = cultureHasMonthAbbr ? monthDayPattern.replace("MMMM", "MMM") : monthDayPattern;
 
-            var minutePos: number = fullPattern.indexOf("mm");
-            var pmPos: number = fullPattern.indexOf("tt");
-            var shortHourPattern: string = pmPos > -1 ? shortTimePattern.replace(":mm ", "") : shortTimePattern;
+            let minutePos: number = fullPattern.indexOf("mm");
+            let pmPos: number = fullPattern.indexOf("tt");
+            let shortHourPattern: string = pmPos > -1 ? shortTimePattern.replace(":mm ", "") : shortTimePattern;
             this.HourPattern = yearPos < minutePos ? this.DayPattern + separator + shortHourPattern : shortHourPattern + separator + this.DayPattern;
 
             this.MinutePattern = shortTimePattern;

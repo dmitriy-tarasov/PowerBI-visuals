@@ -41,15 +41,32 @@ module powerbi {
         }
 
         public reject<TError>(reason?: TError): IPromise2<any, TError> {
-            var deferred = this.defer();
+            let deferred = this.defer();
             deferred.reject(reason);
             return deferred.promise;
         }
 
         public resolve<TSuccess>(value: TSuccess): IPromise2<TSuccess, any> {
-            var deferred = this.defer();
+            let deferred = this.defer();
             deferred.resolve(value);
             return deferred.promise;
+        }
+
+        public all(promises: IPromise2<any, any>[]): IPromise<any[]>;
+
+        public all(promises: any): IPromise<any[]> {
+            let unwrappedPromises = jQuery.map(promises, (value) => {
+                return value && value.promise ? value.promise : value;
+            });
+
+            return new JQueryPromiseWrapper($.when.apply($, unwrappedPromises));
+        }
+
+        public when<T>(value: T | IPromise<T>): IPromise<T>;
+
+        public when<T>(value: any): IPromise<T> {
+            let unwrappedPromise = value && value.promise ? value.promise : value;
+            return new JQueryPromiseWrapper($.when(unwrappedPromise));
         }
     }
 
@@ -67,7 +84,7 @@ module powerbi {
             this.promise = new JQueryPromiseWrapper(deferred.promise());
         }
 
-        public resolve(value: TSuccess| IPromise<any>): void {
+        public resolve(value: TSuccess | IPromise<any>): void {
             this.deferred.resolve(value);
         }
 
@@ -111,7 +128,7 @@ module powerbi {
         private static wrapCallback(callback: (arg: any) => any): (arg: any) => any {
             if (callback)
                 return arg => {
-                    var value = callback(arg);
+                    let value = callback(arg);
 
                     // If the callback returns a Promise, unwrap that to allow jQuery to chain.
                     if (value instanceof JQueryPromiseWrapper)

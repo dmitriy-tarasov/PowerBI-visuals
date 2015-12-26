@@ -29,9 +29,9 @@
 module powerbi {
     import DataViewObjectDescriptors = powerbi.data.DataViewObjectDescriptors;
     import DataViewObjectDescriptor = powerbi.data.DataViewObjectDescriptor;
-    import DisplayNameGetter = powerbi.data.DisplayNameGetter;
     import Selector = powerbi.data.Selector;
     import IStringResourceProvider = jsCommon.IStringResourceProvider;
+    import IRect = powerbi.visuals.IRect;
 
     /**
      * Represents a visualization displayed within an application (PowerBI dashboards, ad-hoc reporting, etc.).
@@ -58,7 +58,7 @@ module powerbi {
          *
          * @param finalViewport This is the viewport that the visual will eventually be resized to.
          */
-        onResizing(finalViewport: IViewport): void;
+        onResizing?(finalViewport: IViewport): void;
 
         /** 
          * Notifies the IVisual of new data being provided.
@@ -82,7 +82,7 @@ module powerbi {
         canResizeTo?(viewport: IViewport): boolean;
 
         /** Gets the set of objects that the visual is currently displaying. */
-        enumerateObjectInstances?(options: EnumerateVisualObjectInstancesOptions): VisualObjectInstance[];
+        enumerateObjectInstances?(options: EnumerateVisualObjectInstancesOptions): VisualObjectInstanceEnumeration;
     }
 
     export interface IVisualPlugin {
@@ -107,6 +107,12 @@ module powerbi {
         /** The class of the plugin.  At the moment it is only used to have a way to indicate the class name that a custom visual has. */
         class?: string;
 
+        /** The url to the icon to display within the visualization pane. */
+        iconUrl?: string;
+
+        /** Check if a visual is custom */
+        custom?: boolean;
+
         /* Function to get the list of sortable roles */
         getSortableRoles?: (visualSortableOptions?: VisualSortableOptions) => string[];
     }
@@ -123,6 +129,11 @@ module powerbi {
          * are expected to edit this in-place.
          */
         dataViewMappings: data.CompiledDataViewMapping[];
+
+        /**
+         * Visual should prefer to request a higher volume of data.
+         */
+        preferHigherDataVolume?: boolean;
     }
 
     /** Parameters available to a sortable visual candidate */
@@ -144,8 +155,8 @@ module powerbi {
 
     /**
      * Defines the visual filtering capabilities for various filter kinds.
-       By default all visuals support attribute filters and measure filters in their innermost scope. 
-    */
+     * By default all visuals support attribute filters and measure filters in their innermost scope. 
+     */
     export interface VisualFilterMappings {
         measureFilter?: VisualFilterMapping;
     }
@@ -167,25 +178,20 @@ module powerbi {
         /** Indicates whether cross-highlight is supported by the visual. This is useful for query generation. */
         supportsHighlight?: boolean;
 
+        /** Indicates whether the visual uses onSelected function for data selections.  Default is true. */
+        supportsSelection?: boolean;
+
         /** Indicates whether sorting is supported by the visual. This is useful for query generation */
         sorting?: VisualSortingCapabilities;
 
         /** Indicates whether a default title should be displayed.  Visuals with self-describing layout can omit this. */
         suppressDefaultTitle?: boolean;
-    }
 
-    /** Defines the data roles understood by the IVisual. */
-    export interface VisualDataRole {
-        /** Unique name for the VisualDataRole. */
-        name: string;
+        /** Indicates whether drilling is supported by the visual. */
+        drilldown?: VisualDrillCapabilities;
 
-        /** Indicates the kind of role.  This value is used to build user interfaces, such as a field well. */
-        kind: VisualDataRoleKind;
-
-        displayName?: DisplayNameGetter;
-
-        /** Indicates the preferred ValueTypes to be used in this data role.  This is used by authoring tools when adding fields into the visual. */
-        preferredTypes?: ValueTypeDescriptor[];
+        /** Indicates whether rotating is supported by the visual. */
+        canRotate?: boolean;
     }
 
     /** Defines the visual sorting capability. */
@@ -200,6 +206,12 @@ module powerbi {
         implicit?: VisualImplicitSorting;
     }
 
+    /** Defines the visual's drill capability. */
+    export interface VisualDrillCapabilities {
+        /** Returns the drillable role names for this visual **/
+        roles?: string[];
+    }
+
     /** Defines implied sorting behaviour for an IVisual. */
     export interface VisualImplicitSorting {
         clauses: VisualImplicitSortingClause[];
@@ -207,16 +219,7 @@ module powerbi {
 
     export interface VisualImplicitSortingClause {
         role: string;
-        direction: data.QuerySortDirection;
-    }
-
-    export const enum VisualDataRoleKind {
-        /** Indicates that the role should be bound to something that evaluates to a grouping of values. */
-        Grouping,
-        /** Indicates that the role should be bound to something that evaluates to a single value in a scope. */
-        Measure,
-        /** Indicates that the role can be bound to either Grouping or Measure. */
-        GroupingOrMeasure,
+        direction: SortDirection;
     }
 
     /** Defines the capabilities of an IVisual. */
@@ -258,7 +261,7 @@ module powerbi {
         operationKind?: VisualDataChangeOperationKind;
     }
 
-    export const enum VisualDataChangeOperationKind {
+    export enum VisualDataChangeOperationKind {
         Create = 0,
         Append = 1
     }
@@ -273,10 +276,10 @@ module powerbi {
 
     export interface SortableFieldDescriptor {
         queryName: string;
-        sortDirection?: data.QuerySortDirection;
+        sortDirection?: SortDirection;
     }
 
-    export const enum ViewMode {
+    export enum ViewMode {
         View = 0,
         Edit = 1,
     }
@@ -312,11 +315,15 @@ module powerbi {
         /** Notifies of a data point being selected. */
         onSelect(args: SelectEventArgs): void;  // TODO: Revisit onSelect vs. onSelectObject.
 
+        /** Check if selection is sticky or otherwise. */
+        shouldRetainSelection(): boolean;
+
         /** Notifies of a visual object being selected. */
         onSelectObject?(args: SelectObjectEventArgs): void;  // TODO: make this mandatory, not optional.
 
         /** Notifies that properties of the IVisual have changed. */
         persistProperties(changes: VisualObjectInstance[]): void;
+        persistProperties(changes: VisualObjectInstancesToPersist): void;
 
         ///** This information will be part of the query. */
         //onDataRangeChanged(range: {
@@ -347,11 +354,18 @@ module powerbi {
 
         /** Sets a toolbar on the host. */
         setToolbar($selector: JQuery): void;
-    }
 
-    export interface IViewport {
-        height: number;
-        width: number;
+        /** Gets Geocoding Service. */
+        geocoder(): IGeocoder;
+
+        /** Gets the locale string */
+        locale?(): string;
+
+        /** Gets the promise factory. */
+        promiseFactory(): IPromiseFactory;
+
+        /** Gets filter analyzer */
+        filterAnalyzer?(filter: data.SemanticFilter, fieldSQExprs: data.SQExpr[]): IFilterAnalyzer;
     }
 
     /** Animation options for visuals. */
@@ -383,6 +397,37 @@ module powerbi {
     export interface DragEventArgs {
         event: DragEvent;
         data: VisualDragPayload;
+    }
+
+    /** Defines geocoding services. */
+    export interface IGeocoder {
+        geocode(query: string, category?: string): IPromise<IGeocodeCoordinate>;
+        geocodeBoundary(latitude: number, longitude: number, category: string, levelOfDetail?: number, maxGeoData?: number): IPromise<IGeocodeBoundaryCoordinate>;
+    }
+
+    export interface IGeocodeCoordinate {
+        latitude: number;
+        longitude: number;
+    }
+
+    export interface IGeocodeBoundaryCoordinate {
+        latitude?: number;
+        longitude?: number;
+        locations?: IGeocodeBoundaryPolygon[]; // one location can have multiple boundary polygons
+    }
+
+    export interface IGeocodeBoundaryPolygon {
+        nativeBing: string;
+        
+        /** array of lat/long pairs as [lat1, long1, lat2, long2,...] */
+        geographic?: Float64Array;
+
+        /** array of absolute pixel position pairs [x1,y1,x2,y2,...]. It can be used by the client for cache the data. */
+        absolute?: Float64Array;
+        absoluteBounds?: IRect;
+
+        /** string of absolute pixel position pairs "x1 y1 x2 y2...". It can be used by the client for cache the data. */
+        absoluteString?: string;
     }
 
     export interface SelectorForColumn {
@@ -418,7 +463,7 @@ module powerbi {
         displayName?: string;
 
         /** The set of property values for this object.  Some of these properties may be defaults provided by the IVisual. */
-        properties?: {
+        properties: {
             [propertyName: string]: DataViewPropertyValue;
         };
 
@@ -429,5 +474,44 @@ module powerbi {
         validValues?: {
             [propertyName: string]: string[];
         };
+
+        /** (Optional) VisualObjectInstanceEnumeration category index. */
+        containerIdx?: number;
+    }
+
+    export type VisualObjectInstanceEnumeration = VisualObjectInstance[] | VisualObjectInstanceEnumerationObject;
+
+    export interface VisualObjectInstanceEnumerationObject {
+        /** The visual object instances. */
+        instances: VisualObjectInstance[];
+
+        /** Defines a set of containers for related object instances. */
+        containers?: VisualObjectInstanceContainer[];
+    }
+
+    export interface VisualObjectInstanceContainer {
+        displayName: data.DisplayNameGetter;
+    }
+
+    export interface VisualObjectInstancesToPersist {
+        /** Instances which should be merged with existing instances. */
+        merge?: VisualObjectInstance[];
+
+        /** Instances which should replace existing instances. */
+        replace?: VisualObjectInstance[];
+
+        /** Instances which should be deleted from the existing instances. */
+        remove?: VisualObjectInstance[];
+    }
+
+    export interface IFilterAnalyzer {
+        /** Indicates the filter has Not condition. */
+        isNotFilter(): boolean;
+
+        /** The selected filter values. */
+        selectedIdentities(): DataViewScopeIdentity[];
+
+        /** Indicates the filter is using a default filter value. */
+        hasDefaultFilterOverride(): IPromise<boolean>;
     }
 }

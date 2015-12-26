@@ -27,325 +27,346 @@
 /// <reference path="../_references.ts"/>
 
 module powerbi.visuals {
+    import DisplayNameKeys = SlicerUtil.DisplayNameKeys;
+    import DOMHelper = SlicerUtil.DOMHelper;
+    import SettingsHelper = SlicerUtil.SettingsHelper;
+    import SlicerOrientation = slicerOrientation.Orientation;
+
+    export interface SlicerDefaultValueHandler {
+        getDefaultValue(): data.SQConstantExpr;
+        getIdentityFields(): data.SQExpr[];
+    }
+
+    export interface SlicerConstructorOptions {
+        domHelper?: DOMHelper;
+        behavior?: IInteractiveBehavior;
+    }
+
+    export interface ISlicerRenderer {
+        init(options: SlicerInitOptions): IInteractivityService;
+        render(options: SlicerRenderOptions): void;
+    }
+
+    export interface SlicerRenderOptions {
+        dataView: DataView;
+        data: SlicerData;
+        viewport: IViewport;
+        renderAsImage: (url: string) => boolean;
+        resetScrollbarPosition?: boolean;
+    }
 
     export interface SlicerData {
         categorySourceName: string;
-        formatString: string;
         slicerDataPoints: SlicerDataPoint[];
+        slicerSettings: SlicerSettings;
+        hasSelectionOverride?: boolean;
     }
 
     export interface SlicerDataPoint extends SelectableDataPoint {
         value: string;
-        mouseOver: boolean;
-        mouseOut: boolean;
+        tooltip: string;
+        isSelectAllDataPoint?: boolean;
     }
 
     export interface SlicerSettings {
-        header: {
-            height: number;
-            borderBottomWidth: number;
+        general: {
+            outlineColor: string;
+            outlineWeight: number;
+            orientation: SlicerOrientation;
         };
-        headerText: {
-            marginLeft: number;
-            marginTop: number;
+        header: {
+            borderBottomWidth: number;
+            show: boolean;
+            outline: string;
+            fontColor: string;
+            background?: string;
+            textSize: number;
         };
         slicerText: {
             color: string;
-            hoverColor: string;
-            selectionColor: string;
-            marginLeft: number;
+            outline: string;
+            background?: string;
+            textSize: number;
         };
-        slicerItemContainer: {
-            height: number;
-            marginTop: number;
-            marginLeft: number;
+        selection: {
+            selectAllCheckboxEnabled: boolean;
+            singleSelect: boolean;
         };
+    }
+
+    export interface SlicerInitOptions {
+        visualInitOptions: VisualInitOptions;
+        loadMoreData: () => void;
     }
 
     export class Slicer implements IVisual {
         private element: JQuery;
         private currentViewport: IViewport;
         private dataView: DataView;
-        private slicerContainer: D3.Selection;
-        private slicerHeader: D3.Selection;
-        private slicerBody: D3.Selection;
-        private listView: IListView;
         private slicerData: SlicerData;
         private settings: SlicerSettings;
         private interactivityService: IInteractivityService;
+        private behavior: IInteractiveBehavior;
         private hostServices: IVisualHostServices;
-        private static clearTextKey = 'Slicer_Clear';
+        private slicerRenderer: ISlicerRenderer;
+        private slicerOrientation: SlicerOrientation;
         private waitingForData: boolean;
+        private renderAsImage: (url: string) => boolean;
+        private domHelper: DOMHelper;
+        private initOptions: VisualInitOptions;
+        public static DefaultStyleProperties(): SlicerSettings {
+            return {
+                general: {
+                    outlineColor: '#808080',
+                    outlineWeight: 1,
+                    orientation: SlicerOrientation.Vertical,
+                },
+                header: {
+                    borderBottomWidth: 1,
+                    show: true,
+                    outline: 'BottomOnly',
+                    fontColor: '#000000',
+                    textSize: 10,
+                },
+                slicerText: {
+                    color: '#666666',
+                    outline: 'None',
+                    textSize: 10,
+                },
+                selection: {
+                    selectAllCheckboxEnabled: false,
+                    singleSelect: true
+                },
+            };
+        }
 
-        private static Container: ClassAndSelector = {
-            class: 'slicerContainer',
-            selector: '.slicerContainer'
-        };
-        private static Header: ClassAndSelector = {
-            class: 'slicerHeader',
-            selector: '.slicerHeader'
-        };
-        private static HeaderText: ClassAndSelector = {
-            class: 'headerText',
-            selector: '.headerText'
-        };
-        private static Body: ClassAndSelector = {
-            class: 'slicerBody',
-            selector: '.slicerBody'
-        };
-        private static ItemContainer: ClassAndSelector = {
-            class: 'slicerItemContainer',
-            selector: '.slicerItemContainer'
-        };
-        private static LabelText: ClassAndSelector = {
-            class: 'slicerText',
-            selector: '.slicerText'
-        };
-        private static Input: ClassAndSelector = {
-            class: 'slicerCheckbox',
-            selector: '.slicerCheckbox'
-        };
-        private static Clear: ClassAndSelector = {
-            class: 'clear',
-            selector: '.clear'
-        };
-
-        public static DefaultStyleProperties: SlicerSettings = {
-            header: {
-                height: 22,
-                borderBottomWidth: 1,
-            },
-            headerText: {
-                marginLeft: 8,
-                marginTop: 0,
-            },
-            slicerText: {
-                color: '#666666',
-                hoverColor: '#212121',
-                selectionColor: '#212121',
-                marginLeft: 8,
-            },
-            slicerItemContainer: {
-                height: 24,
-                // The margin is assigned in the less file. This is needed for the height calculations.
-                marginTop: 5,
-                marginLeft: 8
-            },
-        };
-
-        public static converter(dataView: DataView): SlicerData {
-            var slicerData: SlicerData;
-            if (dataView) {
-                var dataViewCategorical = dataView.categorical;
-                if (dataViewCategorical && dataViewCategorical.categories && dataViewCategorical.categories.length > 0) {
-                    var categories = dataViewCategorical.categories[0];
-                    var categoryValuesLen = categories && categories.values ? categories.values.length : 0;
-                    var slicerDataPoints: SlicerDataPoint[] = [];
-
-                    // Pass over the values to see if there's a positive or negative selection
-                    var hasSelection: boolean = undefined;
-                    for (var idx = 0; idx < categoryValuesLen; idx++) {
-                        var selected = WebInteractivityService.isSelected(slicerProps.selectedPropertyIdentifier, categories, idx);
-                        if (selected !== undefined) {
-                            hasSelection = selected;
-                            break;
-                        }
-                    }
-
-                    for (var idx = 0; idx < categoryValuesLen; idx++) {
-                        var categoryIdentity = categories.identity ? categories.identity[idx] : null;
-                        var selectedCategory = WebInteractivityService.isSelected(slicerProps.selectedPropertyIdentifier, categories, idx);
-                        if (selectedCategory === undefined && hasSelection !== undefined) {
-                            selectedCategory = !hasSelection;
-                        }
-
-                        slicerDataPoints.push({
-                            value: categories.values[idx],
-                            mouseOver: false,
-                            mouseOut: true,
-                            identity: SelectionId.createWithId(categoryIdentity),
-                            selected: selectedCategory
-                        });
-                    }
-                    slicerData = {
-                        categorySourceName: categories.source.displayName,
-                        formatString: valueFormatter.getFormatString(categories.source, slicerProps.formatString),
-                        slicerDataPoints: slicerDataPoints
-                    };
-                }
+        constructor(options?: SlicerConstructorOptions) {
+            if (options) {
+                this.behavior = options.behavior;
             }
-            return slicerData;
+            this.domHelper = new DOMHelper();
         }
 
         public init(options: VisualInitOptions): void {
+            this.initOptions = options;
             this.element = options.element;
             this.currentViewport = options.viewport;
-            this.interactivityService = VisualInteractivityFactory.buildInteractivityService(options);
             this.hostServices = options.host;
-            this.settings = Slicer.DefaultStyleProperties;
+            let settings = this.settings = Slicer.DefaultStyleProperties();
+            this.slicerOrientation = settings.general.orientation;
+            this.waitingForData = false;
 
-            this.initContainer();
+            this.initializeSlicerRenderer(this.slicerOrientation);
         }
 
         public onDataChanged(options: VisualDataChangedOptions): void {
-            var dataViews = options.dataViews;
+            debug.assertValue(options, 'options');
+
+            let dataViews = options.dataViews;
             debug.assertValue(dataViews, 'dataViews');
 
-            if (this.interactivityService)
-                this.interactivityService.clearSelection();
-
-            var existingDataView = this.dataView;
-            if (dataViews && dataViews.length > 0) {
-                this.dataView = dataViews[0];
+            if (_.isEmpty(dataViews)) {
+                return;
             }
 
-            var resetScrollbarPosition = false;
-            // Null check is needed here. If we don't check for null, selecting a value on loadMore event will evaluate the below condition to true and resets the scrollbar
-            if (options.operationKind != null) {
-                resetScrollbarPosition = options.operationKind !== VisualDataChangeOperationKind.Append
+            let existingDataView = this.dataView;
+            this.dataView = dataViews[0];
+            // Reset scrollbar by default, unless it's an Append operation or Selecting an item
+            let resetScrollbarPosition = options.operationKind !== VisualDataChangeOperationKind.Append
                 && !DataViewAnalysis.hasSameCategoryIdentity(existingDataView, this.dataView);
-            }
-            this.updateInternal(resetScrollbarPosition);
-            this.waitingForData = false;
+
+            let metadata = this.dataView.metadata;
+            this.renderAsImage = metadata &&
+                !_.isEmpty(metadata.columns) &&
+                metadata.columns[0].type &&
+                metadata.columns[0].type.misc &&
+                metadata.columns[0].type.misc.imageUrl ? jsCommon.Utility.isValidUrl : $.noop;
+
+            this.render(resetScrollbarPosition, true);
         }
 
         public onResizing(finalViewport: IViewport): void {
             this.currentViewport = finalViewport;
-            var slicerViewport = this.getSlicerBodyViewport(this.currentViewport);
-            this.slicerBody.style({
-                'height': SVGUtil.convertToPixelString(slicerViewport.height),
-                'width': SVGUtil.convertToPixelString(slicerViewport.width),
-            });
-            this.updateInternal();
+            this.render(false /* resetScrollbarPosition */);
         }
 
-        public accept(visitor: InteractivityVisitor, options: any): void {
-            visitor.visitSlicer(options);
+        public enumerateObjectInstances(options: EnumerateVisualObjectInstancesOptions): VisualObjectInstance[] {
+            return ObjectEnumerator.enumerateObjectInstances(options, this.slicerData, this.settings);
         }
 
-        private updateInternal(resetScrollbarPosition: boolean = false) {
-            var data = this.slicerData = Slicer.converter(this.dataView);
-            if (!data) {
-                this.listView.empty();
+        // public for testability
+        public loadMoreData(): void {
+            let dataView = this.dataView;
+            if (!dataView)
                 return;
-            }
 
-            this.listView
-                .viewport(this.getSlicerBodyViewport(this.currentViewport))
-                .rowHeight(this.getRowHeight())
-                .data(data.slicerDataPoints, (d: SlicerDataPoint) => $.inArray(d, data.slicerDataPoints))
-                .render(true, resetScrollbarPosition);
-        }
-
-        private initContainer() {
-            var settings = this.settings;
-            var slicerBodyViewport = this.getSlicerBodyViewport(this.currentViewport);
-            this.slicerContainer = d3.select(this.element.get(0)).classed(Slicer.Container.class, true);
-
-            this.slicerHeader = this.slicerContainer.append("div").classed(Slicer.Header.class, true)
-                .style('height', SVGUtil.convertToPixelString(settings.header.height));
-
-            this.slicerHeader.append("span")
-                .classed(Slicer.Clear.class, true)
-                .attr('title', this.hostServices.getLocalizedString(Slicer.clearTextKey));
-
-            this.slicerHeader.append("div").classed(Slicer.HeaderText.class, true)
-                .style({
-                    'margin-left': SVGUtil.convertToPixelString(settings.headerText.marginLeft),
-                    'margin-top': SVGUtil.convertToPixelString(settings.headerText.marginTop),
-                });
-
-            this.slicerBody = this.slicerContainer.append("div").classed(Slicer.Body.class, true)
-                .style({
-                    'height': SVGUtil.convertToPixelString(slicerBodyViewport.height),
-                    'width': SVGUtil.convertToPixelString(slicerBodyViewport.width)
-                });
-
-            var rowEnter = (rowSelection: D3.Selection) => {
-                var labelWidth = SVGUtil.convertToPixelString(this.currentViewport.width - (settings.slicerItemContainer.marginLeft + settings.slicerText.marginLeft));
-                var listItemElement = rowSelection.append("li")
-                    .classed(Slicer.ItemContainer.class, true)
-                    .style({
-                        'height': SVGUtil.convertToPixelString(settings.slicerItemContainer.height),
-                        'margin-left': SVGUtil.convertToPixelString(settings.slicerItemContainer.marginLeft),
-                    });
-
-                var labelElement = listItemElement.append("label")
-                    .classed(Slicer.Input.class, true);
-
-                labelElement.append("input")
-                    .attr('type', 'checkbox');
-
-                labelElement.append("span")
-                    .classed(Slicer.LabelText.class, true)
-                    .style('width', labelWidth);
-            };
-
-            var rowUpdate = (rowSelection: D3.Selection) => {
-                var formatString;
-                if (this.slicerData) {
-                    this.slicerHeader.select(Slicer.HeaderText.selector).text(this.slicerData.categorySourceName);
-                    formatString = this.slicerData.formatString;
-                }
-
-                var slicerText = rowSelection.selectAll(Slicer.LabelText.selector);
-                slicerText.text((d: SlicerDataPoint) => valueFormatter.format(d.value, formatString));
-                if (this.interactivityService && this.slicerData && this.slicerBody) {
-                    var slicerBody = this.slicerBody.attr('width', this.currentViewport.width);
-                    var slicerItemContainers = slicerBody.selectAll(Slicer.ItemContainer.selector);
-                    var slicerItemLabels = slicerBody.selectAll(Slicer.LabelText.selector);
-                    var slicerItemInputs = slicerBody.selectAll(Slicer.Input.selector);
-                    var slicerClear = this.slicerHeader.select(Slicer.Clear.selector);
-
-                    var behaviorOptions: SlicerBehaviorOptions = {
-                        datapoints: this.slicerData.slicerDataPoints,
-                        slicerItemContainers: slicerItemContainers,
-                        slicerItemLabels: slicerItemLabels,
-                        slicerItemInputs: slicerItemInputs,
-                        slicerClear: slicerClear,
-                    };
-
-                    this.interactivityService.apply(this, behaviorOptions);
-                }
-                rowSelection.select(Slicer.Input.selector).select('input').property('checked', (d: SlicerDataPoint) => d.selected);
-            };
-
-            var rowExit = (rowSelection: D3.Selection) => {
-                rowSelection.remove();
-            };
-
-            var listViewOptions: ListViewOptions = {
-                rowHeight: this.getRowHeight(),
-                enter: rowEnter,
-                exit: rowExit,
-                update: rowUpdate,
-                loadMoreData: () => this.onLoadMoreData(),
-                viewport: this.getSlicerBodyViewport(this.currentViewport),
-                baseContainer: this.slicerBody
-            };
-
-            this.listView = ListViewFactory.createHTMLListView(listViewOptions);
-        }
-
-        private onLoadMoreData(): void {
-            if (!this.waitingForData && this.dataView.metadata && this.dataView.metadata.segment) {
+            let dataViewMetadata = dataView.metadata;
+            // Making sure that hostservices.loadMoreData is not invoked when waiting for server to load the next segment of data
+            if (!this.waitingForData && dataViewMetadata && dataViewMetadata.segment) {
                 this.hostServices.loadMoreData();
                 this.waitingForData = true;
             }
         }
 
-        private getSlicerBodyViewport(currentViewport: IViewport): IViewport {
-            var settings = this.settings;
-            var slicerBodyHeight = currentViewport.height - (settings.header.height + settings.header.borderBottomWidth);
-            return {
-                height: slicerBodyHeight,
-                width: currentViewport.width
-            };
+        private render(resetScrollbarPosition: boolean, stopWaitingForData?: boolean): void {
+            let localizedSelectAllText = this.hostServices.getLocalizedString(DisplayNameKeys.SelectAll);
+            DataConversion.convert(this.dataView, localizedSelectAllText, this.interactivityService, this.hostServices).then(
+                data => {
+                    if (!data) {
+                        return;
+                    }
+
+                    data.slicerSettings.general.outlineWeight = data.slicerSettings.general.outlineWeight < 0 ? 0 : data.slicerSettings.general.outlineWeight;
+                    this.settings = data.slicerSettings;
+                    this.slicerData = data;
+
+                    let slicerOrientation = SettingsHelper.areSettingsDefined(data) && data.slicerSettings.general && data.slicerSettings.general.orientation ?
+                        data.slicerSettings.general.orientation : Slicer.DefaultStyleProperties().general.orientation;
+
+                    let orientationHasChanged = this.orientationHasChanged(slicerOrientation);
+                    if (orientationHasChanged) {
+                        this.slicerOrientation = slicerOrientation;
+                        // Clear the previous slicer type when rendering the new slicer type
+                        this.element.empty();
+                        this.initializeSlicerRenderer(slicerOrientation);
+                    }
+                    this.slicerRenderer.render({ dataView: this.dataView, data: data, viewport: this.currentViewport, renderAsImage: this.renderAsImage, resetScrollbarPosition: resetScrollbarPosition });
+
+                    if (stopWaitingForData)
+                        this.waitingForData = false;
+                });
         }
 
-        private getRowHeight(): number {
-            var slicerItemSettings = this.settings.slicerItemContainer;
-            return slicerItemSettings.height;
+        private orientationHasChanged(slicerOrientation: SlicerOrientation): boolean {
+            return this.slicerOrientation !== slicerOrientation;
+        }
+
+        private initializeSlicerRenderer(slicerOrientation: SlicerOrientation): void {
+            switch (slicerOrientation) {
+                case SlicerOrientation.Horizontal:
+                    this.initializeHorizontalSlicer();
+                    break;
+
+                case SlicerOrientation.Vertical:
+                    this.initializeVerticalSlicer();
+                    break;
+            }
+        }
+
+        private initializeVerticalSlicer(): void {
+            let verticalSlicerRenderer = this.slicerRenderer = new VerticalSlicerRenderer({ domHelper: this.domHelper, behavior: this.behavior });
+            let options = this.createInitOptions();
+            this.interactivityService = verticalSlicerRenderer.init(options);
+        }
+
+        private initializeHorizontalSlicer(): void {
+            let horizontalSlicerRenderer = this.slicerRenderer = new HorizontalSlicerRenderer({ domHelper: this.domHelper, behavior: this.behavior });
+            let options = this.createInitOptions();
+            this.interactivityService = horizontalSlicerRenderer.init(options);
+        }
+
+        private createInitOptions(): SlicerInitOptions {
+            return {
+                visualInitOptions: this.initOptions,
+                loadMoreData: () => this.loadMoreData()
+            };
+        }
+    }
+
+    /** Helper class for calculating the current slicer settings. */
+    module ObjectEnumerator {
+        export function enumerateObjectInstances(options: EnumerateVisualObjectInstancesOptions, data: SlicerData, settings: SlicerSettings): VisualObjectInstance[] {
+            if (!data)
+                return;
+
+            switch (options.objectName) {
+                case 'items':
+                    return enumerateItems(data, settings);
+                case 'header':
+                    return enumerateHeader(data, settings);
+                case 'general':
+                    return enumerateGeneral(data, settings);
+                case 'selection':
+                    return enumerateSelection(data, settings);
+            }
+        }
+
+        function enumerateSelection(data: SlicerData, settings: SlicerSettings): VisualObjectInstance[] {
+            let slicerSettings = settings;
+            let areSelectionSettingsDefined = SettingsHelper.areSettingsDefined(data) && data.slicerSettings.selection;
+            let selectAllCheckboxEnabled = areSelectionSettingsDefined && data.slicerSettings.selection.selectAllCheckboxEnabled ?
+                data.slicerSettings.selection.selectAllCheckboxEnabled : slicerSettings.selection.selectAllCheckboxEnabled;
+            let singleSelect = data && data.slicerSettings && data.slicerSettings.selection && data.slicerSettings.selection.singleSelect !== undefined ?
+                data.slicerSettings.selection.singleSelect : slicerSettings.selection.singleSelect;
+
+            return [{
+                selector: null,
+                objectName: 'selection',
+                properties: {
+                    selectAllCheckboxEnabled: selectAllCheckboxEnabled,
+                    singleSelect: singleSelect
+                }
+            }];
+        }
+
+        function enumerateHeader(data: SlicerData, settings: SlicerSettings): VisualObjectInstance[] {
+            let slicerSettings = settings;
+            let areHeaderSettingsDefined = SettingsHelper.areSettingsDefined(data) && data.slicerSettings.header;
+            let fontColor = areHeaderSettingsDefined && data.slicerSettings.header.fontColor ?
+                data.slicerSettings.header.fontColor : slicerSettings.header.fontColor;
+            let background = areHeaderSettingsDefined && data.slicerSettings.header.background ?
+                data.slicerSettings.header.background : slicerSettings.header.background;
+            return [{
+                selector: null,
+                objectName: 'header',
+                properties: {
+                    show: slicerSettings.header.show,
+                    fontColor: fontColor,
+                    background: background,
+                    outline: slicerSettings.header.outline,
+                    textSize: slicerSettings.header.textSize,
+                }
+            }];
+        }
+
+        function enumerateItems(data: SlicerData, settings: SlicerSettings): VisualObjectInstance[] {
+            let slicerSettings = settings;
+            let areTextSettingsDefined = SettingsHelper.areSettingsDefined(data) && data.slicerSettings.slicerText;
+            let fontColor = areTextSettingsDefined && data.slicerSettings.slicerText.color ?
+                data.slicerSettings.slicerText.color : slicerSettings.slicerText.color;
+            let background = areTextSettingsDefined && data.slicerSettings.slicerText.background ?
+                data.slicerSettings.slicerText.background : slicerSettings.slicerText.background;
+            return [{
+                selector: null,
+                objectName: 'items',
+                properties: {
+                    fontColor: fontColor,
+                    background: background,
+                    outline: slicerSettings.slicerText.outline,
+                    textSize: slicerSettings.slicerText.textSize,
+                }
+            }];
+        }
+
+        function enumerateGeneral(data: SlicerData, settings: SlicerSettings): VisualObjectInstance[] {
+            let slicerSettings = settings;
+            let areGeneralSettingsDefined = SettingsHelper.areSettingsDefined(data) && data.slicerSettings.general != null;
+            let outlineColor = areGeneralSettingsDefined && data.slicerSettings.general.outlineColor ?
+                data.slicerSettings.general.outlineColor : slicerSettings.general.outlineColor;
+            let outlineWeight = areGeneralSettingsDefined && data.slicerSettings.general.outlineWeight ?
+                data.slicerSettings.general.outlineWeight : slicerSettings.general.outlineWeight;
+            let orientation = areGeneralSettingsDefined && data.slicerSettings.general.orientation != null ?
+                data.slicerSettings.general.orientation : slicerSettings.general.orientation;
+
+            return [{
+                selector: null,
+                objectName: 'general',
+                properties: {
+                    outlineColor: outlineColor,
+                    outlineWeight: outlineWeight,
+                    orientation: orientation,
+                }
+            }];
         }
     }
 }

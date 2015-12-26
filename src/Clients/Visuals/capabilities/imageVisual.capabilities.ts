@@ -24,8 +24,10 @@
  *  THE SOFTWARE.
  */
 
+/// <reference path="../_references.ts"/>
+
 module powerbi.visuals {
-    export var imageVisualCapabilities: VisualCapabilities = {
+    export const imageVisualCapabilities: VisualCapabilities = {
         objects: {
             general: {
                 properties: {
@@ -33,7 +35,18 @@ module powerbi.visuals {
                         type: { misc: { imageUrl: true } }
                     }
                 }
-            }
-        }
+            },
+            imageScaling: {
+                displayName: data.createDisplayNameGetter('Visual_Image_Scaling_Type'),
+                properties: {
+                    imageScalingType: {
+                        displayName: data.createDisplayNameGetter('Visual_Image_Scaling_Type'),
+                        type: { enumeration: imageScalingType.type }
+                    },
+                }
+            },
+        },
+        suppressDefaultTitle: true,
+        supportsSelection: false,
     };
 } 

@@ -37,6 +37,7 @@ module powerbi.data {
     /** Defines a logical object in a visualization. */
     export interface DataViewObjectDescriptor {
         displayName?: DisplayNameGetter;
+        description?: DisplayNameGetter;
         properties: DataViewObjectPropertyDescriptors;
     }
 
@@ -47,9 +48,13 @@ module powerbi.data {
     /** Defines a property of a DataViewObjectDefinition. */
     export interface DataViewObjectPropertyDescriptor {
         displayName?: DisplayNameGetter;
+        description?: DisplayNameGetter;
+        placeHolderText?: DisplayNameGetter;
         type: DataViewObjectPropertyTypeDescriptor;
+        rule?: DataViewObjectPropertyRuleDescriptor;        
 
-        rule?: DataViewObjectPropertyRuleDescriptor;
+        /** Indicates whether the Format Painter should ignore this property. */
+        suppressFormatPainterCopy?: boolean;   
     }
 
     export type DataViewObjectPropertyTypeDescriptor = ValueTypeDescriptor | StructuralTypeDescriptor;
@@ -76,7 +81,7 @@ module powerbi.data {
             return findProperty(
                 descriptors,
                 (propDesc: DataViewObjectPropertyDescriptor) => {
-                    var formattingTypeDesc = ValueType.fromDescriptor(propDesc.type).formatting;
+                    let formattingTypeDesc = ValueType.fromDescriptor(propDesc.type).formatting;
                     return formattingTypeDesc && formattingTypeDesc.formatString;
                 });
         }
@@ -86,8 +91,18 @@ module powerbi.data {
             return findProperty(
                 descriptors,
                 (propDesc: DataViewObjectPropertyDescriptor) => {
-                    var propType: StructuralTypeDescriptor = propDesc.type;
+                    let propType: StructuralTypeDescriptor = propDesc.type;
                     return propType && !!propType.filter;
+                });
+        }
+
+        /** Attempts to find the default value property.  This can be useful for propagating schema default value. */
+        export function findDefaultValue(descriptors: DataViewObjectDescriptors): DataViewObjectPropertyIdentifier {
+            return findProperty(
+                descriptors,
+                (propDesc: DataViewObjectPropertyDescriptor) => {
+                    let propType: StructuralTypeDescriptor = propDesc.type;
+                    return propType && !!propType.expression && propType.expression.defaultValue;
                 });
         }
 
@@ -98,10 +113,10 @@ module powerbi.data {
             if (!descriptors)
                 return;
 
-            for (var objectName in descriptors) {
-                var objPropDescs = descriptors[objectName].properties;
+            for (let objectName in descriptors) {
+                let objPropDescs = descriptors[objectName].properties;
 
-                for (var propertyName in objPropDescs) {
+                for (let propertyName in objPropDescs) {
                     if (propPredicate(objPropDescs[propertyName])) {
                         return {
                             objectName: objectName,

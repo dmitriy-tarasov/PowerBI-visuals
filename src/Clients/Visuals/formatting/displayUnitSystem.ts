@@ -27,10 +27,11 @@
 /// <reference path="../_references.ts"/>
 
 module powerbi {
+    import StringExtensions = jsCommon.StringExtensions;
 
-    var maxExponent = 24;
-    var defaultScientificBigNumbersBoundary = 1E14;
-    var scientificSmallNumbersBoundary = 1E-4;
+    const maxExponent = 24;
+    const defaultScientificBigNumbersBoundary = 1E15;
+    const scientificSmallNumbersBoundary = 1E-4;
 
     export class DisplayUnit {
         // Fields
@@ -59,8 +60,12 @@ module powerbi {
 
         public isApplicableTo(value: number): boolean {
             value = Math.abs(value);
-            var precision = Double.getPrecision(value, 3);
+            let precision = Double.getPrecision(value, 3);
             return Double.greaterOrEqualWithPrecision(value, this.applicableRangeMin, precision) && Double.lessWithPrecision(value, this.applicableRangeMax, precision);
+        }
+
+        public isScaling(): boolean {
+            return this.value > 1;
         }
     }
 
@@ -69,11 +74,15 @@ module powerbi {
         // Constants
         static UNSUPPORTED_FORMATS = /^(p\d*)|(.*\%)|(e\d*)$/i;
         static NUMBER_FORMAT = /#|0/;
+        static SUPPORTED_SCIENTIFIC_FORMATS = /^((0*\.*\,*#*-*)*|g)*$/i;
+        static DEFAULT_SCIENTIFIC_FORMAT = "0.######E+0";
+        static AUTO_DISPLAYUNIT_VALUE = 0;
+        static NONE_DISPLAYUNIT_VALUE = 1;
 
         // Fields
         public units: DisplayUnit[];
         public displayUnit: DisplayUnit;
-        private _unitBaseValue: number;
+        private unitBaseValue: number;
 
         // Constructor
         constructor(units?: DisplayUnit[]) {
@@ -90,39 +99,43 @@ module powerbi {
             if (value === undefined)
                 return;
 
-            this._unitBaseValue = value;
+            this.unitBaseValue = value;
             this.displayUnit = this.findApplicableDisplayUnit(value);
         }
 
         private findApplicableDisplayUnit(value: number): DisplayUnit {
-            var count = this.units.length;
-            for (var i = 0; i < count; i++) {
-                var unit = this.units[i];
-                if (unit.isApplicableTo(value)) {
+            for (let unit of this.units) {
+                if (unit.isApplicableTo(value))
                     return unit;
-                }
             }
+
             return undefined;
         }
 
         public format(value: number, format: string, decimals?: number, trailingZeros?: boolean ): string {
 
-            if (!DisplayUnitSystem.UNSUPPORTED_FORMATS.test(format)) {
-                if (this.displayUnit) {
-                    var projectedValue = this.displayUnit.project(value);
-                    var nonScientificFormat = (trailingZeros)
+            if (this.isFormatSupported(format)) {
+                if (this.hasScientitifcFormat(format)) {
+                    return this.formatHelper(value, value, '', format, decimals, trailingZeros);
+                }
+                if (this.isScalingUnit() && this.shouldRespectScalingUnit(format)) {
+                    let projectedValue = this.displayUnit.project(value);
+                    let nonScientificFormat = (trailingZeros)
                         ? DisplayUnitSystem.getNonScientificFormatWithPrecision(this.displayUnit.labelFormat, decimals)
                         : this.displayUnit.labelFormat;
                     return this.formatHelper(value, projectedValue, nonScientificFormat, format, decimals, trailingZeros);
                 }
                 if (decimals != null) {
                     if (trailingZeros && format && DisplayUnitSystem.NUMBER_FORMAT.test(format)) {
-                        var formatWithPrecision = DisplayUnitSystem.getFormatWithPrecision(decimals);
-                        format = format.replace(/0\.0*/g, formatWithPrecision);
-                        return this.formatHelper(value, value, '', format, decimals, trailingZeros);
+                        let formatWithPrecision = DisplayUnitSystem.getFormatWithPrecision(decimals);
+                        //Using the regex below we can maintain the original format (with/without dot, $ etc.) while forcing precision.
+                        let regex = /^[a-zA-Z0-9- ]*$/.test(format) ?/.0*/g:/0\.0*/g;
+                        format = format.replace(regex, formatWithPrecision);
+                        let decimalsForFormatting = this.getNumberOfDecimalsForFormatting(format, decimals);
+                        return this.formatHelper(value, value, '', format, decimalsForFormatting, trailingZeros);
                     }
                     if (trailingZeros) {
-                        var nonScientificFormat = DisplayUnitSystem.getNonScientificFormatWithPrecision('{0}', decimals);
+                        let nonScientificFormat = DisplayUnitSystem.getNonScientificFormatWithPrecision('{0}', decimals);
                         return this.formatHelper(value, value, nonScientificFormat, format, decimals, trailingZeros);
                     }
                     return this.formatHelper(value, value, '', format, decimals, trailingZeros);
@@ -133,55 +146,79 @@ module powerbi {
             return formattingService.formatValue(value, format);
         }
 
+        public isFormatSupported(format: string): boolean {
+            return !DisplayUnitSystem.UNSUPPORTED_FORMATS.test(format);
+        }
+
+        public getNumberOfDecimalsForFormatting(format: string, decimals?: number) {
+            return decimals;
+        }
+
+        public isScalingUnit(): boolean {
+            return this.displayUnit && this.displayUnit.isScaling();
+        }
+
+        public shouldRespectScalingUnit(format: string): boolean{
+            return true;
+        }
+
         private formatHelper(value: number, projectedValue: number, nonScientificFormat: string, format: string, decimals?: number, trailingZeros?: boolean) {
-            var precision = (decimals != null) ? Double.pow10(decimals) : Double.getPrecision(value);
+            let precision = (decimals != null) ? Double.pow10(decimals) : Double.getPrecision(value);
             
-            var x = Double.roundToPrecision(projectedValue, precision);
+            let x = Double.roundToPrecision(projectedValue, precision);
 
             if (format && !formattingService.isStandardNumberFormat(format))
                 return formattingService.formatNumberWithCustomOverride(x, format, nonScientificFormat);
 
-            var textFormat = trailingZeros ? DisplayUnitSystem.getFormatWithPrecision(decimals) : 'G';
-            var text = formattingService.formatValue(x, textFormat);
+            let textFormat = trailingZeros ? DisplayUnitSystem.getFormatWithPrecision(decimals) : 'G';
+            let text = formattingService.formatValue(x, textFormat);
             return formattingService.format(nonScientificFormat, [text]);
         }
 
-        private static getNonScientificFormatWithPrecision(baseFormat?: string, decimals?: number): string {
+        private static getNonScientificFormatWithPrecision(baseFormat: string, decimals: number): string {
             if (!decimals || baseFormat === undefined)
                 return baseFormat;
 
-            var newFormat = "{0:" + DisplayUnitSystem.getFormatWithPrecision(decimals) + "}";
+            let newFormat = "{0:" + DisplayUnitSystem.getFormatWithPrecision(decimals) + "}";
 
             return baseFormat.replace("{0}", newFormat);
         }
 
         private static getFormatWithPrecision(decimals?: number): string {
             if (decimals == null) return 'G';
-            return ",0." + jsCommon.StringExtensions.repeat('0',Math.abs(decimals));
+            return ",0." + StringExtensions.repeat('0',Math.abs(decimals));
         }
 
         /** Formats a single value by choosing an appropriate base for the DisplayUnitSystem before formatting. */
-        public formatSingleValue(value: number, format: string, decimals?: number): string {
+        public formatSingleValue(value: number, format: string, decimals?: number, trailingZeros?: boolean): string {
             // Change unit base to a value appropriate for this value
             this.update(this.shouldUseValuePrecision(value) ? Double.getPrecision(value, 8) : value);
 
-            return this.format(value, format, decimals);
+            return this.format(value, format, decimals, trailingZeros);
         }
 
         private shouldUseValuePrecision(value: number): boolean {
             if (this.units.length === 0)
                 return true;
 
-            // Check if the value is big enough to have a valid unit by checking against the smallest unit.
-            return Math.abs(value) < this.units[0].applicableRangeMin;
+            // Check if the value is big enough to have a valid unit by checking against the smallest unit (that it's value bigger than 1).
+            let applicableRangeMin: number = 0;
+            for (let i = 0; i < this.units.length; i++) {
+                if (this.units[i].isScaling()) {
+                    applicableRangeMin = this.units[i].applicableRangeMin;
+                    break;
+                }
+            }
+            
+            return Math.abs(value) < applicableRangeMin;
         }
 
         private removeFractionIfNecessary(formatString: string): string {
             if (formatString) {
-                if (Math.abs(this._unitBaseValue) >= 0.01) {
+                if (Math.abs(this.unitBaseValue) >= 0.01) {
                     formatString = formatString.replace(/^(p\d*)$/i, "p0");
                 }
-                if (Math.abs(this._unitBaseValue) >= 1.0) {
+                if (Math.abs(this.unitBaseValue) >= 1.0) {
                     formatString = formatString.replace(/[#0]\.[#0]+$/, "0"); // Custom number format with hash/zero fraction
                     formatString = formatString.replace(/^(n\d*)$/i, "n0");
                     formatString = formatString.replace(/^(f\d*)$/i, "f0");
@@ -189,6 +226,28 @@ module powerbi {
                 }
             }
             return formatString;
+        }
+
+        protected isScientific(value: number): boolean {
+            return value < - defaultScientificBigNumbersBoundary || value > defaultScientificBigNumbersBoundary ||
+                (-scientificSmallNumbersBoundary < value && value < scientificSmallNumbersBoundary && value !== 0);
+        }
+
+        protected hasScientitifcFormat(format: string): boolean {
+            return format && format.toUpperCase().indexOf("E") !== -1;
+        }
+
+        protected supportsScientificFormat(format: string): boolean {
+            if (format)
+                return DisplayUnitSystem.SUPPORTED_SCIENTIFIC_FORMATS.test(format);
+
+            return true;
+        }
+
+        protected shouldFallbackToScientific(value: number, format: string) {
+            return !this.hasScientitifcFormat(format)
+                && this.supportsScientificFormat(format)
+                && this.isScientific(value);
         }
     }
 
@@ -203,8 +262,7 @@ module powerbi {
     /** Provides a unit system that creates a more concise format for displaying values. This is suitable for most of the cases where
         we are showing values (chart axes) and as such it is the default unit system. */
     export class DefaultDisplayUnitSystem extends DisplayUnitSystem {
-        private static _units: DisplayUnit[];
-        private static _scientificBigNumbersBoundary: number;
+        private static units: DisplayUnit[];
 
         // Constructor
         constructor(unitLookup: (exponent: number) => DisplayUnitSystemNames) {
@@ -214,26 +272,23 @@ module powerbi {
         // Methods
         public format(data: number, format: string, decimals?: number, trailingZeros?: boolean): string {
             // Use scientific format outside of the range
-            if (!this.displayUnit && this.isScientific(data) && !DisplayUnitSystem.UNSUPPORTED_FORMATS.test(format)) {
-                if (!format || format.toUpperCase().indexOf("E") < 0) {
-                    format = "0.######E+0";
-                }
+            if (this.isFormatSupported(format) && this.shouldFallbackToScientific(data, format)) {
+                if (trailingZeros && decimals)
+                    format = "0." + StringExtensions.repeat('0', Math.abs(decimals)) + "E+0";
+                else
+                    format = DisplayUnitSystem.DEFAULT_SCIENTIFIC_FORMAT;
             }
+
             return super.format(data, format, decimals, trailingZeros);
         }
 
-        private isScientific(value: number): boolean {
-            return value < - defaultScientificBigNumbersBoundary || value > defaultScientificBigNumbersBoundary ||
-                (-scientificSmallNumbersBoundary < value && value < scientificSmallNumbersBoundary && value !== 0);
-        }
-
         public static reset(): void {
-            DefaultDisplayUnitSystem._units = null;
+            DefaultDisplayUnitSystem.units = null;
         }
 
         private static getUnits(unitLookup: (exponent: number) => DisplayUnitSystemNames): DisplayUnit[] {
-            if (!DefaultDisplayUnitSystem._units) {
-                DefaultDisplayUnitSystem._units = createDisplayUnits(unitLookup, (value: number, previousUnitValue: number, min: number) => {
+            if (!DefaultDisplayUnitSystem.units) {
+                DefaultDisplayUnitSystem.units = createDisplayUnits(unitLookup, (value: number, previousUnitValue: number, min: number) => {
                     // When dealing with millions/billions/trillions we need to switch to millions earlier: for example instead of showing 100K 200K 300K we should show 0.1M 0.2M 0.3M etc
                     if (value - previousUnitValue >= 1000) {
                         return value / 10;
@@ -242,16 +297,10 @@ module powerbi {
                     return min;
                 });
 
-                // Set scientific value boundary
-                DefaultDisplayUnitSystem._scientificBigNumbersBoundary = defaultScientificBigNumbersBoundary;
-                for (var i = 0, len = DefaultDisplayUnitSystem._units.length; i < len; ++i) {
-                    var unit = DefaultDisplayUnitSystem._units[i];
-                    if (unit.applicableRangeMax > DefaultDisplayUnitSystem._scientificBigNumbersBoundary) {
-                        DefaultDisplayUnitSystem._scientificBigNumbersBoundary = unit.applicableRangeMax;
-                    }
-                }
+                // Ensure last unit has max of infinity
+                DefaultDisplayUnitSystem.units[DefaultDisplayUnitSystem.units.length - 1].applicableRangeMax = Infinity;
             }
-            return DefaultDisplayUnitSystem._units;
+            return DefaultDisplayUnitSystem.units;
         }
     }
 
@@ -259,7 +308,7 @@ module powerbi {
         one of those units (e.g. 0.9M is not allowed since it's less than 1 million). This is suitable for cases such as dashboard tiles
         where we have restricted space but do not want to show partial units. */
     export class WholeUnitsDisplayUnitSystem extends DisplayUnitSystem {
-        private static _units: DisplayUnit[];
+        private static units: DisplayUnit[];
 
         // Constructor
         constructor(unitLookup: (exponent: number) => DisplayUnitSystemNames) {
@@ -267,14 +316,107 @@ module powerbi {
         }
 
         public static reset(): void {
-            WholeUnitsDisplayUnitSystem._units = null;
+            WholeUnitsDisplayUnitSystem.units = null;
         }
 
         private static getUnits(unitLookup: (exponent: number) => DisplayUnitSystemNames): DisplayUnit[] {
-            if (!WholeUnitsDisplayUnitSystem._units) {
-                WholeUnitsDisplayUnitSystem._units = createDisplayUnits(unitLookup);
+            if (!WholeUnitsDisplayUnitSystem.units) {
+                WholeUnitsDisplayUnitSystem.units = createDisplayUnits(unitLookup);
+                
+                // Ensure last unit has max of infinity
+                WholeUnitsDisplayUnitSystem.units[WholeUnitsDisplayUnitSystem.units.length - 1].applicableRangeMax = Infinity;
             }
-            return WholeUnitsDisplayUnitSystem._units;
+
+            return WholeUnitsDisplayUnitSystem.units;
+        }
+
+        public format(data: number, format: string, decimals?: number, trailingZeros?: boolean): string {
+            // Use scientific format outside of the range
+            if (this.isFormatSupported(format) && this.shouldFallbackToScientific(data, format)) {
+                if (trailingZeros && decimals)
+                    format = "0." + StringExtensions.repeat('0', Math.abs(decimals)) + "E+0";
+                else
+                    format = DisplayUnitSystem.DEFAULT_SCIENTIFIC_FORMAT;
+            }
+
+            return super.format(data, format, decimals, trailingZeros);
+        }
+    }
+
+    export class DataLabelsDisplayUnitSystem extends DisplayUnitSystem {
+
+        // Constants
+        static UNSUPPORTED_FORMATS = /^(e\d*)$/i;
+        static PERCENTAGE_FORMAT = '%';
+
+        private static units: DisplayUnit[];
+
+        constructor(unitLookup: (exponent: number) => DisplayUnitSystemNames) {
+            super(DataLabelsDisplayUnitSystem.getUnits(unitLookup));
+        }
+
+        public isFormatSupported(format: string): boolean {
+            return !DataLabelsDisplayUnitSystem.UNSUPPORTED_FORMATS.test(format);
+        }
+
+        public getNumberOfDecimalsForFormatting(format: string, decimals?: number) {
+            if (format.indexOf(DataLabelsDisplayUnitSystem.PERCENTAGE_FORMAT) >= 0)
+                return decimals -= 2;
+        }
+
+        public shouldRespectScalingUnit(format: string): boolean {
+            return (!format || format.indexOf(DataLabelsDisplayUnitSystem.PERCENTAGE_FORMAT) < 0);
+        }
+
+        private static getUnits(unitLookup: (exponent: number) => DisplayUnitSystemNames): DisplayUnit[] {
+            if (!DataLabelsDisplayUnitSystem.units) {
+                let units = [];
+                let adjustMinBasedOnPreviousUnit = (value: number, previousUnitValue: number, min: number): number => {
+                    // Never returns true, we are always ignoring
+                    // We do not early switch (e.g. 100K instead of 0.1M)
+                    // Intended? If so, remove this function, otherwise, remove if statement
+                    if (value === -1)
+                        if (value - previousUnitValue >= 1000) {
+                            return value / 10;
+                        }
+                    return min;
+                };
+
+                //Add Auto & None
+                let names = unitLookup(-1);
+                addUnitIfNonEmpty(units, DisplayUnitSystem.AUTO_DISPLAYUNIT_VALUE, names.title, names.format, adjustMinBasedOnPreviousUnit);
+
+                names = unitLookup(0);
+                addUnitIfNonEmpty(units, DisplayUnitSystem.NONE_DISPLAYUNIT_VALUE, names.title, names.format, adjustMinBasedOnPreviousUnit);
+
+                //add normal units
+                DataLabelsDisplayUnitSystem.units = units.concat(createDisplayUnits(unitLookup, adjustMinBasedOnPreviousUnit));
+
+                // Ensure last unit has max of infinity
+                DataLabelsDisplayUnitSystem.units[DataLabelsDisplayUnitSystem.units.length - 1].applicableRangeMax = Infinity;
+            }
+            return DataLabelsDisplayUnitSystem.units;
+        }
+
+        protected shouldFallbackToScientific(value: number, format: string) {
+            if (!this.displayUnit)
+                return super.shouldFallbackToScientific(value, format);
+            else
+                // Allow auto display unit to pass through
+                return this.displayUnit.value !== DisplayUnitSystem.AUTO_DISPLAYUNIT_VALUE
+                    && super.shouldFallbackToScientific(value, format);
+        }
+
+        public format(data: number, format: string, decimals?: number, trailingZeros?: boolean): string {
+            // Use scientific format outside of the range
+            if (this.shouldFallbackToScientific(data, format)) {
+                if (trailingZeros && decimals)
+                    format = "0." + StringExtensions.repeat('0', Math.abs(decimals)) + "E+0";
+                else
+                    format = '0E+0';
+            }
+
+            return super.format(data, format, decimals, trailingZeros);
         }
     }
 
@@ -284,9 +426,9 @@ module powerbi {
     }
 
     function createDisplayUnits(unitLookup: (exponent: number) => DisplayUnitSystemNames, adjustMinBasedOnPreviousUnit?: (value: number, previousUnitValue: number, min: number) => number) {
-        var units = [];
-        for (var i = 3; i < maxExponent; i++) {
-            var names = unitLookup(i);
+        let units = [];
+        for (let i = 3; i < maxExponent; i++) {
+            let names = unitLookup(i);
             if (names)
                 addUnitIfNonEmpty(units, Double.pow10(i), names.title, names.format, adjustMinBasedOnPreviousUnit);
         }
@@ -301,17 +443,17 @@ module powerbi {
         labelFormat: string,
         adjustMinBasedOnPreviousUnit?: (value: number, previousUnitValue: number, min: number) => number): void {
         if (title || labelFormat) {
-            var min = value;
+            let min = value;
 
             if (units.length > 0) {
-                var previousUnit = units[units.length - 1];
+                let previousUnit = units[units.length - 1];
 
                 if (adjustMinBasedOnPreviousUnit)
                     min = adjustMinBasedOnPreviousUnit(value, previousUnit.value, min);
 
                 previousUnit.applicableRangeMax = min;
             }
-            var unit = new DisplayUnit();
+            let unit = new DisplayUnit();
             unit.value = value;
             unit.applicableRangeMin = min;
             unit.applicableRangeMax = min * 1000;
